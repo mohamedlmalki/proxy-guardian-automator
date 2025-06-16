@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, Building, MapPin, Network } from "lucide-react";
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, Building, MapPin, Network, Server } from "lucide-react";
 import { ValidProxy } from "@/pages/Index";
 import { useToast } from "@/hooks/use-toast";
 
@@ -54,11 +54,11 @@ export const ProxyChecker = ({
       const data = await response.json();
       return data;
     } catch (error: any) {
-      console.error(`Error checking proxy ${proxy}:`, error);
       return { 
         proxy, 
-        type: 'Error', 
         isValid: false, 
+        apiType: 'Error',
+        portType: 'Error',
       };
     }
   };
@@ -191,17 +191,20 @@ export const ProxyChecker = ({
                         <CheckCircle className="w-4 h-4 text-green-500 mr-2" />
                         <span>{result.proxy}</span>
                       </div>
-                      {/* --- UPDATED: New layout based on your screenshot --- */}
                       <div className="pl-6 text-gray-300 space-y-1 text-xs">
                         <div className="flex justify-between">
                           <div className="flex items-center space-x-1.5">
-                            <Building className="w-3 h-3"/>
-                            <span>{result.isp}</span>
+                            <Server className="w-3 h-3"/>
+                            <span>API Type: {result.apiType}</span>
                           </div>
                           <div className="flex items-center space-x-1.5">
                             <Network className="w-3 h-3"/>
-                            <span>{result.type}</span>
+                            <span>Protocol: {result.portType}</span>
                           </div>
+                        </div>
+                        <div className="flex items-center space-x-1.5">
+                          <Building className="w-3 h-3"/>
+                          <span>{result.isp}</span>
                         </div>
                         <div className="flex items-center space-x-1.5">
                           <MapPin className="w-3 h-3"/>
@@ -213,7 +216,7 @@ export const ProxyChecker = ({
                     <div className="flex items-center space-x-3">
                       <XCircle className="w-4 h-4 text-red-500" />
                       <span className="text-gray-400 font-mono text-sm">{result.proxy}</span>
-                      <Badge variant="destructive">{result.type || 'Invalid'}</Badge>
+                      <Badge variant="destructive">{result.apiType || 'Error'}</Badge>
                     </div>
                   )}
                 </div>
