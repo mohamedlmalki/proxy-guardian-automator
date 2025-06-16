@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ProxyChecker } from "@/components/ProxyChecker";
 import { ProxySwitcher } from "@/components/ProxySwitcher";
 import { AutoFillForm } from "@/components/AutoFillForm";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, RotateCcw, FormInput } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export interface ValidProxy {
   proxy: string;
   isValid: boolean;
   apiType?: string;
   portType?: string;
-  responseTime?: number;
+  latency?: number;
+  anonymity?: string;
   location?: string;
   city?: string;
   country?: string;
@@ -19,21 +21,108 @@ export interface ValidProxy {
   fraud_score?: number;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const Index = () => {
   const [validProxies, setValidProxies] = useState<ValidProxy[]>([]);
   const [activeProxy, setActiveProxy] = useState<ValidProxy | null>(null);
-  
+
   const [proxyInput, setProxyInput] = useState("");
   const [checkerResults, setCheckerResults] = useState<ValidProxy[]>([]);
+  const [isChecking, setIsChecking] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const { toast } = useToast();
+  
+  const isCheckingRef = useRef(isChecking);
+  useEffect(() => {
+    isCheckingRef.current = isChecking;
+  }, [isChecking]);
 
   const handleProxiesValidated = (proxies: ValidProxy[]) => {
     setValidProxies(proxies.filter(p => p.isValid));
-    setCheckerResults(proxies); 
   };
 
   const handleProxyChanged = (proxy: ValidProxy | null) => {
     setActiveProxy(proxy);
   };
+  
+  const checkProxy = async (proxy: string): Promise<ValidProxy> => {
+    try {
+      const response = await fetch('/api/check-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proxy }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+      
+      const data = await response.json();
+      return data;
+    } catch (error: any) {
+      return { 
+        proxy, 
+        isValid: false, 
+        apiType: 'Error',
+        portType: 'Error',
+      };
+    }
+  };
+
+  const handleCheckProxies = async (rateLimit: string) => {
+    isCheckingRef.current = true;
+    setIsChecking(true);
+    
+    if (!proxyInput.trim()) {
+      toast({ title: "No proxies to check", description: "Please enter some proxy addresses first.", variant: "destructive" });
+      setIsChecking(false);
+      isCheckingRef.current = false;
+      return;
+    }
+    
+    setProgress(0);
+    setCheckerResults([]);
+
+    const proxies = proxyInput.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    const newResults: ValidProxy[] = [];
+    
+    const requestsPerMinute = parseInt(rateLimit, 10);
+    const delay = requestsPerMinute > 0 ? 60000 / requestsPerMinute : 0;
+
+    for (let i = 0; i < proxies.length; i++) {
+      if (!isCheckingRef.current) {
+        toast({ title: "Process Aborted", description: `Checked ${i} of ${proxies.length} proxies.` });
+        break; 
+      }
+
+      const result = await checkProxy(proxies[i]);
+      newResults.push(result);
+      setCheckerResults([...newResults]);
+      setProgress(((i + 1) / proxies.length) * 100);
+
+      if (i < proxies.length - 1 && delay > 0) {
+        await sleep(delay);
+      }
+    }
+    
+    if (isCheckingRef.current) {
+        const validCount = newResults.filter(r => r.isValid).length;
+        toast({ title: "Proxy check completed", description: `${validCount}/${newResults.length} proxies are valid.` });
+    }
+    
+    isCheckingRef.current = false;
+    setIsChecking(false);
+  };
+  
+  const handleAbort = () => {
+    isCheckingRef.current = false;
+    setIsChecking(false);
+  };
+  
+  const handleClearResults = () => {
+    setCheckerResults([]);
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
@@ -87,7 +176,11 @@ const Index = () => {
               proxyInput={proxyInput}
               onProxyInputChange={setProxyInput}
               results={checkerResults}
-              setResults={setCheckerResults}
+              isChecking={isChecking}
+              progress={progress}
+              onCheckProxies={handleCheckProxies}
+              onAbort={handleAbort}
+              onClearResults={handleClearResults}
             />
           </TabsContent>
 
