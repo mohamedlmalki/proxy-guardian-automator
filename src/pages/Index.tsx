@@ -12,8 +12,9 @@ export interface ValidProxy {
   type: string;
   isValid: boolean;
   responseTime?: number;
-  location?: string;
+  location?: string; // This is the ISO code e.g., "US"
   city?: string;
+  country?: string; // Add this for the full country name
   isp?: string;
   fraud_score?: number;
 }
