@@ -28,6 +28,14 @@ export interface TestResult {
     message: string;
     ip?: string;
     country?: string;
+    anonymity?: string;
+    location?: string;
+    latency?: number;
+}
+
+export interface ConnectionLogEntry extends TestResult {
+  timestamp: string;
+  proxy: string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,8 +45,7 @@ const Index = () => {
   const [validProxies, setValidProxies] = useState<ValidProxy[]>([]);
   const [activeProxy, setActiveProxy] = useState<ValidProxy | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
-
-  // ... (rest of state declarations remain the same) ...
+  const [connectionLog, setConnectionLog] = useState<ConnectionLogEntry[]>([]);
   const [proxyInput, setProxyInput] = useState("");
   const [checkerResults, setCheckerResults] = useState<ValidProxy[]>([]);
   const [isChecking, setIsChecking] = useState(false);
@@ -46,24 +53,138 @@ const Index = () => {
   const { toast } = useToast();
   const [pinnedProxies, setPinnedProxies] = useState<string[]>([]);
 
+  // --- STATE LIFTED FROM SWITCHER ---
+  const [isSwitcherRunning, setIsSwitcherRunning] = useState(false);
+  const [currentProxyIndex, setCurrentProxyIndex] = useState(0);
+  const [switchInterval, setSwitchInterval] = useState(30);
+  const [remainingTime, setRemainingTime] = useState(0);
+  const [switchCount, setSwitchCount] = useState(0);
+  const switcherIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // --- STATE LIFTED FROM AUTOFILL ---
+  const [isAutoFillRunning, setIsAutoFillRunning] = useState(false);
+  const [autoFillProgress, setAutoFillProgress] = useState(0);
+  const [processedCount, setProcessedCount] = useState(0);
+  const [currentEmail, setCurrentEmail] = useState("");
+  const isAutoFillRunningRef = useRef(isAutoFillRunning);
+  useEffect(() => { isAutoFillRunningRef.current = isAutoFillRunning }, [isAutoFillRunning]);
+
+
+  // --- LOGIC MOVED FROM SWITCHER ---
+  useEffect(() => {
+    const validOnlyProxies = validProxies.filter(p => p.isValid);
+    if (isSwitcherRunning && validOnlyProxies.length > 0) {
+      switcherIntervalRef.current = setInterval(() => {
+        setRemainingTime(prev => {
+          if (prev <= 1) {
+            const nextIndex = (currentProxyIndex + 1) % validOnlyProxies.length;
+            setCurrentProxyIndex(nextIndex);
+            setSwitchCount(c => c + 1);
+            handleProxyChanged(validOnlyProxies[nextIndex]);
+            toast({ title: "Proxy switched", description: `Now using: ${validOnlyProxies[nextIndex].proxy}` });
+            return switchInterval;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      if (switcherIntervalRef.current) {
+        clearInterval(switcherIntervalRef.current);
+      }
+    }
+    return () => { if (switcherIntervalRef.current) clearInterval(switcherIntervalRef.current) };
+  }, [isSwitcherRunning, currentProxyIndex, switchInterval, validProxies]);
+
+
+  const handleStartSwitcher = () => {
+    const validOnlyProxies = validProxies.filter(p => p.isValid);
+    if (validOnlyProxies.length === 0) {
+      toast({ title: "No valid proxies", description: "Please check some proxies first.", variant: "destructive" });
+      return;
+    }
+    setIsSwitcherRunning(true);
+    setRemainingTime(switchInterval);
+    setSwitchCount(0);
+    setCurrentProxyIndex(0);
+    setConnectionLog([]);
+    handleProxyChanged(validOnlyProxies[0]);
+    toast({ title: "Proxy switcher started", description: `Switching every ${switchInterval} seconds` });
+  };
+
+  const handleStopSwitcher = () => {
+    setIsSwitcherRunning(false);
+    setRemainingTime(0);
+    handleProxyChanged(null);
+    toast({ title: "Proxy switcher stopped", description: `Total switches: ${switchCount}` });
+  };
+
+  const handleManualSwitch = () => {
+    const validOnlyProxies = validProxies.filter(p => p.isValid);
+    if (validOnlyProxies.length === 0 || !isSwitcherRunning) return;
+    const nextIndex = (currentProxyIndex + 1) % validOnlyProxies.length;
+    setCurrentProxyIndex(nextIndex);
+    setSwitchCount(prev => prev + 1);
+    handleProxyChanged(validOnlyProxies[nextIndex]);
+    setRemainingTime(switchInterval);
+    toast({ title: "Manual switch", description: `Switched to: ${validOnlyProxies[nextIndex].proxy}` });
+  };
+
+  // --- LOGIC MOVED FROM AUTOFILL ---
+  const handleStartAutoFill = async (emails: string[], targetUrl: string, delay: number) => {
+    if (!activeProxy) {
+      toast({ title: "No active proxy", description: "Please start the proxy switcher first.", variant: "destructive" });
+      return;
+    }
+    if (emails.length === 0) {
+      toast({ title: "No valid emails", description: "Please enter some email addresses first.", variant: "destructive" });
+      return;
+    }
+    if (!targetUrl) {
+      toast({ title: "No target URL", description: "Please enter a target URL for form submission.", variant: "destructive" });
+      return;
+    }
+
+    setIsAutoFillRunning(true);
+    setAutoFillProgress(0);
+    setProcessedCount(0);
+    toast({ title: "Auto-fill started", description: `Processing ${emails.length} emails.` });
+
+    for (let i = 0; i < emails.length; i++) {
+      if (!isAutoFillRunningRef.current) { // Use ref to check for stop signal
+        toast({ title: "Auto-fill stopped", description: `Processed ${i} emails before stopping.` });
+        break;
+      }
+      setCurrentEmail(emails[i]);
+      // Simulate form submission
+      console.log(`Submitting form for: ${emails[i]} via proxy: ${activeProxy.proxy}`);
+      await sleep(delay * 1000);
+      setProcessedCount(i + 1);
+      setAutoFillProgress(((i + 1) / emails.length) * 100);
+    }
+
+    setIsAutoFillRunning(false);
+    setCurrentEmail("");
+    if (isAutoFillRunningRef.current) { // Check if it completed naturally
+        toast({ title: "Auto-fill completed", description: `Successfully processed ${emails.length} emails` });
+    }
+  };
+
+  const handleStopAutoFill = () => {
+    setIsAutoFillRunning(false);
+  };
+
+
   useEffect(() => {
     try {
       const savedPinned = localStorage.getItem(PINNED_PROXIES_KEY);
-      if (savedPinned) {
-        setPinnedProxies(JSON.parse(savedPinned));
-      }
-    } catch (error) {
-      console.error("Could not load pinned proxies from local storage", error);
-    }
+      if (savedPinned) { setPinnedProxies(JSON.parse(savedPinned)); }
+    } catch (error) { console.error("Could not load pinned proxies", error); }
   }, []);
 
   const handleSetPinned = (proxiesToPin: string[], pinStatus: boolean) => {
     const newPinnedSet = new Set(pinnedProxies);
-    if (pinStatus) {
-      proxiesToPin.forEach(p => newPinnedSet.add(p));
-    } else {
-      proxiesToPin.forEach(p => newPinnedSet.delete(p));
-    }
+    if (pinStatus) { proxiesToPin.forEach(p => newPinnedSet.add(p)); }
+    else { proxiesToPin.forEach(p => newPinnedSet.delete(p)); }
     const newPinnedArray = Array.from(newPinnedSet);
     setPinnedProxies(newPinnedArray);
     localStorage.setItem(PINNED_PROXIES_KEY, JSON.stringify(newPinnedArray));
@@ -71,16 +192,11 @@ const Index = () => {
   
   useEffect(() => {
     const pinnedStrings = new Set(pinnedProxies);
-    setCheckerResults(prevResults => 
-      prevResults.map(r => ({ ...r, isPinned: pinnedStrings.has(r.proxy) }))
-    );
+    setCheckerResults(prevResults => prevResults.map(r => ({ ...r, isPinned: pinnedStrings.has(r.proxy) })));
   }, [pinnedProxies]);
 
-
   const isCheckingRef = useRef(isChecking);
-  useEffect(() => {
-    isCheckingRef.current = isChecking;
-  }, [isChecking]);
+  useEffect(() => { isCheckingRef.current = isChecking; }, [isChecking]);
 
   const handleProxiesValidated = (proxies: ValidProxy[]) => {
     setValidProxies(proxies.filter(p => p.isValid));
@@ -88,153 +204,91 @@ const Index = () => {
 
   const handleProxyChanged = (proxy: ValidProxy | null) => {
     setActiveProxy(proxy);
-    setTestResult(null); // Reset test result on proxy change
+    setTestResult(null); 
+    if (proxy) { handleTestConnection(proxy.proxy); }
   };
   
-  const handleTestConnection = async () => {
-    if (!activeProxy) {
-      toast({ title: "No active proxy to test", variant: "destructive" });
-      return;
-    }
-    setTestResult({ success: false, message: "Testing..."});
+  const handleTestConnection = async (proxyToTest?: string) => {
+    const proxy = proxyToTest || activeProxy?.proxy;
+    if (!proxy) { toast({ title: "No active proxy to test", variant: "destructive" }); return; }
+    setTestResult({ success: false, message: "Testing..." });
+    let result: TestResult;
     try {
-      const response = await fetch('/api/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proxy: activeProxy.proxy }),
-      });
-      const data = await response.json();
-      setTestResult(data);
+      const response = await fetch('/api/test-connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxy }) });
+      result = await response.json();
     } catch (error) {
-      setTestResult({ success: false, message: "Request failed." });
+      result = { success: false, message: "Request failed." };
     }
+    setTestResult(result);
+    setConnectionLog(prevLog => [{ ...result, proxy, timestamp: new Date().toLocaleTimeString() }, ...prevLog].slice(0, 10));
   };
 
   const checkProxy = async (proxy: string, targetUrl: string, checkCount: number, provider: string, apiKey: string): Promise<ValidProxy> => {
     try {
-      const response = await fetch('/api/check-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proxy, targetUrl, checkCount, provider, apiKey }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API request failed with status ${response.status}`);
-      }
-      
+      const response = await fetch('/api/check-proxy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxy, targetUrl, checkCount, provider, apiKey }) });
+      if (!response.ok) { throw new Error(`API request failed with status ${response.status}`); }
       const data = await response.json();
       return { ...data, isPinned: pinnedProxies.includes(proxy) };
     } catch (error: any) {
-      return { 
-        proxy, 
-        isValid: false, 
-        apiType: 'Error',
-        portType: 'Error',
-        healthScore: 0,
-        isPinned: pinnedProxies.includes(proxy),
-      };
+      return { proxy, isValid: false, apiType: 'Error', portType: 'Error', healthScore: 0, isPinned: pinnedProxies.includes(proxy) };
     }
   };
 
   const handleCheckProxies = async (rateLimit: string, targetUrl: string, checkCount: number, provider: string, apiKey: string) => {
-    isCheckingRef.current = true;
-    setIsChecking(true);
-    
-    if (!proxyInput.trim()) {
-      toast({ title: "No proxies to check", description: "Please enter some proxy addresses first.", variant: "destructive" });
-      setIsChecking(false);
-      isCheckingRef.current = false;
-      return;
-    }
-    
+    isCheckingRef.current = true; setIsChecking(true);
+    if (!proxyInput.trim()) { toast({ title: "No proxies to check", variant: "destructive" }); setIsChecking(false); isCheckingRef.current = false; return; }
     setProgress(0);
     const pinned = checkerResults.filter(r => r.isPinned);
     const pinnedStrings = pinned.map(p => p.proxy);
     const proxiesToCheck = proxyInput.split('\n').map(line => line.trim()).filter(line => line.length > 0 && !pinnedStrings.includes(line));
-    
-    setCheckerResults(pinned); // Start with only the pinned proxies
-
+    setCheckerResults(pinned);
     const newResults: ValidProxy[] = [];
     const requestsPerMinute = parseInt(rateLimit, 10);
     const delay = requestsPerMinute > 0 ? 60000 / requestsPerMinute : 0;
-
     for (let i = 0; i < proxiesToCheck.length; i++) {
-      if (!isCheckingRef.current) {
-        toast({ title: "Process Aborted", description: `Checked ${i} of ${proxiesToCheck.length} proxies.` });
-        break; 
-      }
-
+      if (!isCheckingRef.current) { toast({ title: "Process Aborted", description: `Checked ${i} of ${proxiesToCheck.length} proxies.` }); break; }
       const result = await checkProxy(proxiesToCheck[i], targetUrl, checkCount, provider, apiKey);
       newResults.push(result);
       setCheckerResults([...pinned, ...newResults]);
       setProgress(((i + 1) / proxiesToCheck.length) * 100);
-
-      if (i < proxiesToCheck.length - 1 && delay > 0) {
-        await sleep(delay);
-      }
+      if (i < proxiesToCheck.length - 1 && delay > 0) { await sleep(delay); }
     }
-    
     if (isCheckingRef.current) {
         const finalResults = [...pinned, ...newResults];
         const validCount = finalResults.filter(r => r.isValid).length;
         toast({ title: "Proxy check completed", description: `${validCount}/${finalResults.length} proxies are valid.` });
     }
-    
-    isCheckingRef.current = false;
-    setIsChecking(false);
+    isCheckingRef.current = false; setIsChecking(false);
   };
 
   const handleRecheckProxies = async (proxiesToRecheck: string[], targetUrl: string, checkCount: number, provider: string, apiKey: string) => {
-    setIsChecking(true);
-    toast({ title: "Re-checking selected proxies..." });
-
+    setIsChecking(true); toast({ title: "Re-checking selected proxies..." });
     for (let i = 0; i < proxiesToRecheck.length; i++) {
       const proxy = proxiesToRecheck[i];
       const result = await checkProxy(proxy, targetUrl, checkCount, provider, apiKey);
-      
-      setCheckerResults(prevResults => 
-        prevResults.map(p => p.proxy === proxy ? result : p)
-      );
+      setCheckerResults(prevResults => prevResults.map(p => p.proxy === proxy ? result : p));
     }
-    
-    setIsChecking(false);
-    toast({ title: "Re-check complete!" });
+    setIsChecking(false); toast({ title: "Re-check complete!" });
   };
 
   const handleRemoveResults = (proxiesToRemove: string[]) => {
     const pinnedStrings = checkerResults.filter(r => r.isPinned).map(r => r.proxy);
     const unpinnedToRemove = proxiesToRemove.filter(p => !pinnedStrings.includes(p));
-
-    if (proxiesToRemove.length > 0 && unpinnedToRemove.length === 0) {
-        toast({ title: "Cannot remove pinned proxies.", description: "Please unpin them first if you wish to remove them.", variant: "destructive"});
-        return;
-    }
+    if (proxiesToRemove.length > 0 && unpinnedToRemove.length === 0) { toast({ title: "Cannot remove pinned proxies.", variant: "destructive"}); return; }
     setCheckerResults(prev => prev.filter(r => !unpinnedToRemove.includes(r.proxy)));
     toast({ title: `Removed ${unpinnedToRemove.length} proxies from results.` });
   };
   
-  const handleAbort = () => {
-    isCheckingRef.current = false;
-    setIsChecking(false);
-  };
-  
-  const handleClearResults = () => {
-    setCheckerResults(prev => prev.filter(r => r.isPinned));
-    toast({ title: "Cleared unpinned results." });
-  }
+  const handleAbort = () => { isCheckingRef.current = false; setIsChecking(false); };
+  const handleClearResults = () => { setCheckerResults(prev => prev.filter(r => r.isPinned)); toast({ title: "Cleared unpinned results." }); }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
       <div className="container mx-auto max-w-7xl">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-            Proxy Guardian Automator
-          </h1>
-          <p className="text-gray-300 text-lg">
-            Professional proxy management, validation, and automation suite
-          </p>
+          <h1 className="text-4xl font-bold text-white mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Proxy Guardian Automator</h1>
+          <p className="text-gray-300 text-lg">Professional proxy management, validation, and automation suite</p>
         </div>
-
         {activeProxy && (
           <Card className="mb-6 bg-green-900/20 border-green-500/30">
             <CardContent className="py-4">
@@ -245,58 +299,53 @@ const Index = () => {
                   <span className="text-white">{activeProxy.proxy}</span>
                   <span className="text-blue-400">({activeProxy.portType})</span>
                 </div>
-                <div className="text-sm text-gray-400">
-                  Valid Proxies: {validProxies.length}
-                </div>
+                <div className="text-sm text-gray-400">Valid Proxies: {validProxies.length}</div>
               </div>
             </CardContent>
           </Card>
         )}
-
         <Tabs defaultValue="checker" className="space-y-6">
           <TabsList className="grid w-full grid-cols-3 bg-slate-800/50 border border-slate-700">
-            <TabsTrigger value="checker" className="flex items-center space-x-2 data-[state=active]:bg-blue-600">
-              <Shield className="w-4 h-4" />
-              <span>Proxy Checker</span>
-            </TabsTrigger>
-            <TabsTrigger value="switcher" className="flex items-center space-x-2 data-[state=active]:bg-purple-600">
-              <RotateCcw className="w-4 h-4" />
-              <span>Proxy Switcher</span>
-            </TabsTrigger>
-            <TabsTrigger value="autofill" className="flex items-center space-x-2 data-[state=active]:bg-green-600">
-              <FormInput className="w-4 h-4" />
-              <span>Auto Fill</span>
-            </TabsTrigger>
+            <TabsTrigger value="checker" className="flex items-center space-x-2 data-[state=active]:bg-blue-600"><Shield className="w-4 h-4" /><span>Proxy Checker</span></TabsTrigger>
+            <TabsTrigger value="switcher" className="flex items-center space-x-2 data-[state=active]:bg-purple-600"><RotateCcw className="w-4 h-4" /><span>Proxy Switcher</span></TabsTrigger>
+            <TabsTrigger value="autofill" className="flex items-center space-x-2 data-[state=active]:bg-green-600"><FormInput className="w-4 h-4" /><span>Auto Fill</span></TabsTrigger>
           </TabsList>
-
+          
           <TabsContent value="checker" className="space-y-6">
             <ProxyChecker 
-              onProxiesValidated={handleProxiesValidated}
-              proxyInput={proxyInput}
-              onProxyInputChange={setProxyInput}
-              results={checkerResults}
-              isChecking={isChecking}
-              progress={progress}
-              onCheckProxies={handleCheckProxies}
-              onAbort={handleAbort}
-              onClearResults={handleClearResults}
-              onRemoveResults={handleRemoveResults}
-              onRecheckProxies={handleRecheckProxies}
-              onSetPinned={handleSetPinned}
+              onProxiesValidated={handleProxiesValidated} proxyInput={proxyInput} onProxyInputChange={setProxyInput}
+              results={checkerResults} isChecking={isChecking} progress={progress}
+              onCheckProxies={handleCheckProxies} onAbort={handleAbort} onClearResults={handleClearResults}
+              onRemoveResults={handleRemoveResults} onRecheckProxies={handleRecheckProxies} onSetPinned={handleSetPinned}
             />
           </TabsContent>
-
           <TabsContent value="switcher" className="space-y-6">
             <ProxySwitcher 
               validProxies={validProxies} 
-              onProxyChanged={handleProxyChanged}
-              onTestConnection={handleTestConnection}
+              onTestConnection={() => handleTestConnection()}
               testResult={testResult}
+              connectionLog={connectionLog}
+              isRunning={isSwitcherRunning}
+              switchInterval={switchInterval}
+              setSwitchInterval={setSwitchInterval}
+              remainingTime={remainingTime}
+              switchCount={switchCount}
+              onStart={handleStartSwitcher}
+              onStop={handleStopSwitcher}
+              onManualSwitch={handleManualSwitch}
+              currentProxyIndex={currentProxyIndex}
             />
           </TabsContent>
-
           <TabsContent value="autofill" className="space-y-6">
-            <AutoFillForm activeProxy={activeProxy} />
+            <AutoFillForm
+              activeProxy={activeProxy}
+              onStartAutoFill={handleStartAutoFill}
+              onStopAutoFill={handleStopAutoFill}
+              isRunning={isAutoFillRunning}
+              progress={autoFillProgress}
+              processedCount={processedCount}
+              currentEmail={currentEmail}
+            />
           </TabsContent>
         </Tabs>
       </div>
