@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ProxyChecker } from "@/components/ProxyChecker";
 import { ProxySwitcher } from "@/components/ProxySwitcher";
-import { AutoFillForm } from "@/components/AutoFillForm";
+import { AutoFillForm, FormSelectors } from "@/components/AutoFillForm";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, RotateCcw, FormInput } from "lucide-react";
@@ -54,7 +54,7 @@ const Index = () => {
   const [pinnedProxies, setPinnedProxies] = useState<string[]>([]);
 
   // --- STATE LIFTED FROM SWITCHER ---
-  const [isSwitcherRunning, setIsSwitcherRunning] = useState(false);
+  const [switcherStatus, setSwitcherStatus] = useState<'stopped' | 'running' | 'paused'>('stopped');
   const [currentProxyIndex, setCurrentProxyIndex] = useState(0);
   const [switchInterval, setSwitchInterval] = useState(30);
   const [remainingTime, setRemainingTime] = useState(0);
@@ -73,7 +73,7 @@ const Index = () => {
   // --- LOGIC MOVED FROM SWITCHER ---
   useEffect(() => {
     const validOnlyProxies = validProxies.filter(p => p.isValid);
-    if (isSwitcherRunning && validOnlyProxies.length > 0) {
+    if (switcherStatus === 'running' && validOnlyProxies.length > 0) {
       switcherIntervalRef.current = setInterval(() => {
         setRemainingTime(prev => {
           if (prev <= 1) {
@@ -93,7 +93,7 @@ const Index = () => {
       }
     }
     return () => { if (switcherIntervalRef.current) clearInterval(switcherIntervalRef.current) };
-  }, [isSwitcherRunning, currentProxyIndex, switchInterval, validProxies]);
+  }, [switcherStatus, currentProxyIndex, switchInterval, validProxies]);
 
 
   const handleStartSwitcher = () => {
@@ -102,7 +102,7 @@ const Index = () => {
       toast({ title: "No valid proxies", description: "Please check some proxies first.", variant: "destructive" });
       return;
     }
-    setIsSwitcherRunning(true);
+    setSwitcherStatus('running');
     setRemainingTime(switchInterval);
     setSwitchCount(0);
     setCurrentProxyIndex(0);
@@ -110,9 +110,19 @@ const Index = () => {
     handleProxyChanged(validOnlyProxies[0]);
     toast({ title: "Proxy switcher started", description: `Switching every ${switchInterval} seconds` });
   };
+  
+  const handlePauseSwitcher = () => {
+    setSwitcherStatus('paused');
+    toast({ title: "Switcher Paused" });
+  };
+
+  const handleResumeSwitcher = () => {
+    setSwitcherStatus('running');
+    toast({ title: "Switcher Resumed" });
+  };
 
   const handleStopSwitcher = () => {
-    setIsSwitcherRunning(false);
+    setSwitcherStatus('stopped');
     setRemainingTime(0);
     handleProxyChanged(null);
     toast({ title: "Proxy switcher stopped", description: `Total switches: ${switchCount}` });
@@ -120,7 +130,7 @@ const Index = () => {
 
   const handleManualSwitch = () => {
     const validOnlyProxies = validProxies.filter(p => p.isValid);
-    if (validOnlyProxies.length === 0 || !isSwitcherRunning) return;
+    if (validOnlyProxies.length === 0 || switcherStatus !== 'running') return;
     const nextIndex = (currentProxyIndex + 1) % validOnlyProxies.length;
     setCurrentProxyIndex(nextIndex);
     setSwitchCount(prev => prev + 1);
@@ -129,8 +139,38 @@ const Index = () => {
     toast({ title: "Manual switch", description: `Switched to: ${validOnlyProxies[nextIndex].proxy}` });
   };
 
+  // --- NEW: Function to reorder proxies ---
+  const handleSendProxyToTop = (proxyToMoveString: string) => {
+    let currentlyActiveProxy: ValidProxy | undefined;
+  
+    setValidProxies(currentProxies => {
+      // Find the proxy that is currently active before reordering
+      if (switcherStatus !== 'stopped' && currentProxies.length > 0) {
+        currentlyActiveProxy = currentProxies[currentProxyIndex];
+      }
+      
+      const proxyToMove = currentProxies.find(p => p.proxy === proxyToMoveString);
+      if (!proxyToMove) return currentProxies;
+  
+      const otherProxies = currentProxies.filter(p => p.proxy !== proxyToMoveString);
+      const newOrder = [proxyToMove, ...otherProxies];
+  
+      // After reordering, if the switcher was running, find the new index of the *previously active* proxy
+      if (currentlyActiveProxy) {
+        const newIndexOfActiveProxy = newOrder.findIndex(p => p.proxy === currentlyActiveProxy!.proxy);
+        // This ensures the same proxy stays active, preventing an abrupt switch
+        if (newIndexOfActiveProxy !== -1) {
+          setCurrentProxyIndex(newIndexOfActiveProxy);
+        }
+      }
+  
+      toast({ title: "Queue Updated", description: `${proxyToMove.proxy} is now at the top.` });
+      return newOrder;
+    });
+  };
+
   // --- LOGIC MOVED FROM AUTOFILL ---
-  const handleStartAutoFill = async (emails: string[], targetUrl: string, delay: number) => {
+  const handleStartAutoFill = async (emails: string[], targetUrl: string, delay: number, selectors: FormSelectors) => {
     if (!activeProxy) {
       toast({ title: "No active proxy", description: "Please start the proxy switcher first.", variant: "destructive" });
       return;
@@ -145,32 +185,58 @@ const Index = () => {
     }
 
     setIsAutoFillRunning(true);
+    isAutoFillRunningRef.current = true;
     setAutoFillProgress(0);
     setProcessedCount(0);
     toast({ title: "Auto-fill started", description: `Processing ${emails.length} emails.` });
 
     for (let i = 0; i < emails.length; i++) {
-      if (!isAutoFillRunningRef.current) { // Use ref to check for stop signal
+      if (!isAutoFillRunningRef.current) {
         toast({ title: "Auto-fill stopped", description: `Processed ${i} emails before stopping.` });
         break;
       }
       setCurrentEmail(emails[i]);
-      // Simulate form submission
-      console.log(`Submitting form for: ${emails[i]} via proxy: ${activeProxy.proxy}`);
-      await sleep(delay * 1000);
+      
+      try {
+        const response = await fetch('/api/auto-fill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: emails[i],
+            targetUrl,
+            proxy: activeProxy.proxy,
+            selectors,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Submission failed');
+        }
+        
+        toast({ title: "Submission Success", description: `Submitted for ${emails[i]}` });
+
+      } catch (error: any) {
+        toast({ title: "Submission Error", description: error.message, variant: "destructive" });
+      }
+
       setProcessedCount(i + 1);
       setAutoFillProgress(((i + 1) / emails.length) * 100);
+      if (i < emails.length - 1) {
+        await sleep(delay * 1000);
+      }
     }
-
+    
+    if (isAutoFillRunningRef.current) {
+        toast({ title: "Auto-fill completed", description: `Finished processing all ${emails.length} emails` });
+    }
     setIsAutoFillRunning(false);
+    isAutoFillRunningRef.current = false;
     setCurrentEmail("");
-    if (isAutoFillRunningRef.current) { // Check if it completed naturally
-        toast({ title: "Auto-fill completed", description: `Successfully processed ${emails.length} emails` });
-    }
   };
 
   const handleStopAutoFill = () => {
-    setIsAutoFillRunning(false);
+    isAutoFillRunningRef.current = false;
   };
 
 
@@ -325,14 +391,17 @@ const Index = () => {
               onTestConnection={() => handleTestConnection()}
               testResult={testResult}
               connectionLog={connectionLog}
-              isRunning={isSwitcherRunning}
+              switcherStatus={switcherStatus}
               switchInterval={switchInterval}
               setSwitchInterval={setSwitchInterval}
               remainingTime={remainingTime}
               switchCount={switchCount}
               onStart={handleStartSwitcher}
               onStop={handleStopSwitcher}
+              onPause={handlePauseSwitcher}
+              onResume={handleResumeSwitcher}
               onManualSwitch={handleManualSwitch}
+              onSendToTop={handleSendProxyToTop}
               currentProxyIndex={currentProxyIndex}
             />
           </TabsContent>

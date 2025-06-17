@@ -4,22 +4,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp } from "lucide-react";
 import { ValidProxy, TestResult, ConnectionLogEntry } from "@/pages/Index";
 
+// Updated Props Interface
 interface ProxySwitcherProps {
   validProxies: ValidProxy[];
   onTestConnection: () => void;
   testResult: TestResult | null;
   connectionLog: ConnectionLogEntry[];
-  isRunning: boolean;
+  switcherStatus: 'stopped' | 'running' | 'paused';
   switchInterval: number;
   setSwitchInterval: (interval: number) => void;
   remainingTime: number;
   switchCount: number;
   onStart: () => void;
   onStop: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onManualSwitch: () => void;
+  onSendToTop: (proxy: string) => void;
   currentProxyIndex: number;
 }
 
@@ -28,19 +33,30 @@ export const ProxySwitcher = ({
   onTestConnection,
   testResult,
   connectionLog,
-  isRunning,
+  switcherStatus,
   switchInterval,
   setSwitchInterval,
   remainingTime,
   switchCount,
   onStart,
   onStop,
+  onPause,
+  onResume,
   onManualSwitch,
+  onSendToTop,
   currentProxyIndex,
 }: ProxySwitcherProps) => {
   const validOnlyProxies = validProxies.filter(p => p.isValid);
   const progress = remainingTime > 0 && switchInterval > 0 ? ((switchInterval - remainingTime) / switchInterval) * 100 : 0;
   const currentProxy = validOnlyProxies[currentProxyIndex];
+  const isRunningOrPaused = switcherStatus === 'running' || switcherStatus === 'paused';
+
+  const getHealthIndicatorClass = (healthScore?: number) => {
+    if (healthScore === undefined) return 'bg-gray-500';
+    if (healthScore >= 80) return 'bg-green-500';
+    if (healthScore >= 50) return 'bg-yellow-500';
+    return 'bg-red-500';
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -53,19 +69,31 @@ export const ProxySwitcher = ({
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="timer" className="text-white">Switch Interval (seconds)</Label>
-              <Input id="timer" type="number" min="5" max="300" value={switchInterval} onChange={(e) => setSwitchInterval(parseInt(e.target.value) || 30)} disabled={isRunning} className="bg-slate-900/50 border-slate-600 text-white" />
+              <Input id="timer" type="number" min="5" max="300" value={switchInterval} onChange={(e) => setSwitchInterval(parseInt(e.target.value) || 30)} disabled={isRunningOrPaused} className="bg-slate-900/50 border-slate-600 text-white" />
             </div>
+
             <div className="flex space-x-2">
-              {!isRunning ? (
+              {switcherStatus === 'stopped' && (
                 <Button onClick={onStart} disabled={validOnlyProxies.length === 0} className="flex-1 bg-green-600 hover:bg-green-700"><Play className="w-4 h-4 mr-2" />Start</Button>
-              ) : (
-                <Button onClick={onStop} className="flex-1 bg-red-600 hover:bg-red-700"><Pause className="w-4 h-4 mr-2" />Stop</Button>
               )}
-              <Button onClick={onManualSwitch} disabled={validOnlyProxies.length === 0 || !isRunning} variant="outline" className="border-slate-600 text-white hover:bg-slate-700"><RotateCcw className="w-4 h-4" /></Button>
+              {switcherStatus === 'running' && (
+                <Button onClick={onPause} className="flex-1 bg-yellow-600 hover:bg-yellow-700"><Pause className="w-4 h-4 mr-2" />Pause</Button>
+              )}
+              {switcherStatus === 'paused' && (
+                <Button onClick={onResume} className="flex-1 bg-green-600 hover:bg-green-700"><Play className="w-4 h-4 mr-2" />Resume</Button>
+              )}
+               <Button onClick={onManualSwitch} disabled={switcherStatus !== 'running'} variant="outline" className="border-slate-600 text-white hover:bg-slate-700"><RotateCcw className="w-4 h-4" /></Button>
+              {isRunningOrPaused && (
+                 <Button onClick={onStop} variant="destructive" size="icon" title="Stop and Reset"><Power className="w-4 h-4" /></Button>
+              )}
             </div>
-            {isRunning && (
+
+            {isRunningOrPaused && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm"><span className="text-gray-400">Next switch in:</span><span className="text-white font-mono">{remainingTime}s</span></div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">Next switch in:</span>
+                  <span className="text-white font-mono">{remainingTime}s</span>
+                </div>
                 <Progress value={progress} className="w-full" />
               </div>
             )}
@@ -74,10 +102,10 @@ export const ProxySwitcher = ({
 
         <Card className="bg-slate-800/50 border-slate-700">
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2 text-white">{isRunning ? <Wifi className="w-5 h-5 text-green-400" /> : <WifiOff className="w-5 h-5 text-gray-400" />}<span>Current Proxy</span></CardTitle>
+            <CardTitle className="flex items-center space-x-2 text-white">{isRunningOrPaused ? <Wifi className="w-5 h-5 text-green-400" /> : <WifiOff className="w-5 h-5 text-gray-400" />}<span>Current Proxy</span></CardTitle>
           </CardHeader>
           <CardContent>
-            {currentProxy && isRunning ? (
+            {currentProxy && isRunningOrPaused ? (
               <div className="space-y-3">
                 <div className="p-3 bg-green-900/20 border border-green-500/30 rounded-lg">
                   <div className="font-mono text-green-400 text-sm mb-2">{currentProxy.proxy}</div>
@@ -138,16 +166,46 @@ export const ProxySwitcher = ({
             {validOnlyProxies.length === 0 ? (
               <div className="text-center py-6 text-gray-500"><Timer className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>No valid proxies available</p></div>
             ) : (
-              <div className="space-y-2 max-h-[150px] overflow-y-auto">
-                {validOnlyProxies.map((proxy, index) => (
-                  <div key={index} className={`p-2 rounded border transition-all duration-200 ${index === currentProxyIndex && isRunning ? 'bg-purple-900/30 border-purple-500/50' : 'bg-slate-900/30 border-slate-600/50'}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-white font-mono text-xs">{proxy.proxy}</span>
-                      <Badge variant="outline" className="text-xs">{proxy.portType}</Badge>
+              <TooltipProvider>
+                <div className="space-y-2 max-h-[150px] overflow-y-auto">
+                  {validOnlyProxies.map((proxy, index) => (
+                    <div key={proxy.proxy} className={`p-2 rounded border transition-all duration-200 ${index === currentProxyIndex && isRunningOrPaused ? 'bg-purple-900/30 border-purple-500/50' : 'bg-slate-900/30 border-slate-600/50'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                           <Tooltip>
+                            <TooltipTrigger>
+                              <span className={`h-2.5 w-2.5 rounded-full ${getHealthIndicatorClass(proxy.healthScore)}`}></span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Health: {proxy.healthScore?.toFixed(0) ?? 'N/A'}%</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <span className="text-white font-mono text-xs">{proxy.proxy}</span>
+                        </div>
+                        <div className="flex items-center space-x-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                               <Button 
+                                  size="icon" 
+                                  variant="ghost" 
+                                  className="h-6 w-6 text-gray-400 hover:text-white" 
+                                  onClick={() => onSendToTop(proxy.proxy)}
+                                  disabled={index === 0}
+                                >
+                                <ArrowUp className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Send to Top</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Badge variant="outline" className="text-xs">{proxy.portType}</Badge>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </TooltipProvider>
             )}
           </CardContent>
         </Card>
