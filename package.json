@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm:start:backend\" \"vite\"",
+    "dev": "concurrently \"npm:start:backend\" \"npm:start:frontend\"",
     "start:backend": "node server.js",
+    "start:frontend": "vite --host 0.0.0.0 --port 8080",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
