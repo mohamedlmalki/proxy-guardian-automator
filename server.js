@@ -13,21 +13,13 @@ app.use(express.json());
 const getTypeFromPort = (proxyString) => {
   try {
     const port = parseInt(proxyString.split(':')[1], 10);
-    
     switch (port) {
-      case 3129:
-      case 80:
-      case 8080:
-        return 'HTTP';
-      case 443:
-      case 8443:
-        return 'HTTPS';
       case 1080:
         return 'SOCKS5';
       case 1081:
         return 'SOCKS4';
       default:
-        return 'Proxy'; 
+        return 'HTTP'; // Defaulting to HTTP for other common proxy ports
     }
   } catch {
     return 'Unknown';
@@ -35,72 +27,91 @@ const getTypeFromPort = (proxyString) => {
 };
 
 app.post('/api/check-proxy', async (req, res) => {
-  const { proxy } = req.body;
+    // Re-introducing checkCount from the request body
+    const { proxy, checkCount = 1 } = req.body;
 
-  if (!proxy || !proxy.includes(':')) {
-    return res.status(400).json({ isValid: false, error: 'Invalid proxy format' });
-  }
-
-  const ipAddress = proxy.split(':')[0];
-  const agent = new HttpsProxyAgent(`http://${proxy}`);
-  let latency = -1;
-  let anonymity = 'Unknown';
-
-  try {
-    // --- Combined Latency and Anonymity Check ---
-    const startTime = Date.now();
-    const anonymityCheckResponse = await axios.get('http://httpbin.org/get', { 
-      httpsAgent: agent, 
-      timeout: 10000 
-    });
-    latency = Date.now() - startTime; // Latency is now calculated from this successful request
-
-    const headers = anonymityCheckResponse.data.headers;
-    if (!headers['X-Forwarded-For'] && !headers['Via']) {
-        anonymity = 'Elite';
-    } else if (headers['X-Forwarded-For']) {
-        anonymity = 'Transparent';
-    } else {
-        anonymity = 'Anonymous';
+    if (!proxy) {
+        return res.status(400).json({ isValid: false, error: 'Invalid proxy format' });
     }
 
-    // --- IP-API Check (No longer needs to be inside the main try-catch for proxy errors) ---
-    const apiURL = `http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,proxy,hosting`;
-    const response = await axios.get(apiURL, { timeout: 10000 });
-    const data = response.data;
+    const agent = new HttpsProxyAgent(`http://${proxy}`);
+    const validationUrl = 'https://httpbin.org/get';
 
-    if (data.status === 'success') {
-      const isProxy = data.proxy || data.hosting;
-      let apiType = 'Direct';
-      if (data.proxy) apiType = 'Proxy';
-      else if (data.hosting) apiType = 'Hosting';
+    let successes = 0;
+    let totalLatency = 0;
+    let anonymity = 'Unknown';
 
-      res.json({
-        proxy: proxy,
-        isValid: true, // If we reached here, the proxy itself is working
-        apiType: apiType,
-        portType: getTypeFromPort(proxy),
-        location: data.countryCode || 'Unknown',
-        city: data.city || 'Unknown',
-        country: data.country || 'Unknown',
-        isp: data.as || 'Unknown',
-        latency: latency,
-        anonymity: anonymity,
-      });
-    } else {
-      // This error is from ip-api.com, not the proxy itself
-      throw new Error(data.message || 'Failed to get data from IP-API.com');
+    for (let i = 0; i < checkCount; i++) {
+        try {
+            const startTime = Date.now();
+            const checkResponse = await axios.get(validationUrl, { 
+                httpsAgent: agent, 
+                timeout: 10000 
+            });
+            totalLatency += Date.now() - startTime;
+            successes++;
+
+            if (i === 0) { 
+                const headers = checkResponse.data.headers;
+                if (!headers['X-Forwarded-For'] && !headers['Via']) {
+                    anonymity = 'Elite';
+                } else if (headers['X-Forwarded-For']) {
+                    anonymity = 'Transparent';
+                } else {
+                    anonymity = 'Anonymous';
+                }
+            }
+        } catch (error) {
+            console.error(`Check ${i + 1} for ${proxy} failed: ${error.message}`);
+        }
     }
-  } catch (error) {
-    console.error(`Error checking ${proxy}: ${error.message}`);
-    res.json({
-      proxy,
-      isValid: false,
-      apiType: 'Error',
-      portType: error.code === 'ECONNABORTED' ? 'Timeout' : 'Error'
-    });
-  }
+
+    // Calculating health score and average latency
+    const healthScore = (successes / checkCount) * 100;
+    const averageLatency = successes > 0 ? Math.round(totalLatency / successes) : -1;
+
+    if (successes === 0) {
+        return res.json({
+            proxy,
+            isValid: false,
+            portType: 'Unreachable',
+            healthScore,
+        });
+    }
+
+    try {
+        const ipAddress = proxy.split(':')[0];
+        const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,proxy,hosting`);
+
+        if (geoResponse.data.status !== 'success') {
+            throw new Error('Failed to get geo info');
+        }
+        
+        res.json({
+            proxy,
+            isValid: true,
+            latency: averageLatency,
+            healthScore, // Adding healthScore to the successful response
+            anonymity,
+            portType: getTypeFromPort(proxy),
+            location: geoResponse.data.countryCode || 'Unknown',
+            city: geoResponse.data.city,
+            country: geoResponse.data.country,
+            isp: geoResponse.data.as,
+            apiType: geoResponse.data.proxy ? 'Proxy' : (geoResponse.data.hosting ? 'Hosting' : 'Direct'),
+        });
+
+    } catch (error) {
+        console.error(`Check for ${proxy} failed: ${error.message}`);
+        res.json({
+            proxy,
+            isValid: false,
+            portType: 'Unreachable',
+            healthScore: 0,
+        });
+    }
 });
+
 
 const PORT = 3001;
 app.listen(PORT, () => {

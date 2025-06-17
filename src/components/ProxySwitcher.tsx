@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,16 +5,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff } from "lucide-react";
-import { ValidProxy } from "@/pages/Index";
+import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap } from "lucide-react";
+import { ValidProxy, TestResult } from "@/pages/Index";
 import { useToast } from "@/hooks/use-toast";
 
 interface ProxySwitcherProps {
   validProxies: ValidProxy[];
   onProxyChanged: (proxy: ValidProxy | null) => void;
+  onTestConnection: () => void;
+  testResult: TestResult | null;
 }
 
-export const ProxySwitcher = ({ validProxies, onProxyChanged }: ProxySwitcherProps) => {
+export const ProxySwitcher = ({ validProxies, onProxyChanged, onTestConnection, testResult }: ProxySwitcherProps) => {
   const [isRunning, setIsRunning] = useState(false);
   const [currentProxyIndex, setCurrentProxyIndex] = useState(0);
   const [timer, setTimer] = useState(30); // seconds
@@ -161,7 +162,7 @@ export const ProxySwitcher = ({ validProxies, onProxyChanged }: ProxySwitcherPro
             
             <Button
               onClick={handleManualSwitch}
-              disabled={validOnlyProxies.length === 0}
+              disabled={validOnlyProxies.length === 0 || !isRunning}
               variant="outline"
               className="border-slate-600 text-white hover:bg-slate-700"
             >
@@ -198,20 +199,24 @@ export const ProxySwitcher = ({ validProxies, onProxyChanged }: ProxySwitcherPro
                 </div>
                 <div className="flex items-center space-x-2">
                   <Badge className="bg-purple-600 text-white">
-                    {currentProxy.type}
+                    {currentProxy.portType}
                   </Badge>
-                  {currentProxy.responseTime && (
-                    <span className="text-xs text-gray-400">
-                      {currentProxy.responseTime}ms
-                    </span>
-                  )}
-                  {currentProxy.location && (
-                    <span className="text-xs text-blue-400">
-                      {currentProxy.location}
-                    </span>
-                  )}
+                  <span className="text-xs text-gray-400">
+                    {currentProxy.latency}ms
+                  </span>
+                  <span className="text-xs text-blue-400">
+                    {currentProxy.location}
+                  </span>
                 </div>
               </div>
+               <Button onClick={onTestConnection} className="w-full bg-sky-600 hover:bg-sky-700">
+                <Zap className="w-4 h-4 mr-2" /> Test Connection
+               </Button>
+               {testResult && (
+                 <div className={`text-xs p-2 rounded ${testResult.success ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+                   {testResult.message}
+                 </div>
+               )}
               <div className="text-sm text-gray-400">
                 Switches: {switchCount}
               </div>
@@ -257,7 +262,7 @@ export const ProxySwitcher = ({ validProxies, onProxyChanged }: ProxySwitcherPro
                       {proxy.proxy}
                     </span>
                     <Badge variant="outline" className="text-xs">
-                      {proxy.type}
+                      {proxy.portType}
                     </Badge>
                   </div>
                 </div>

@@ -19,20 +19,64 @@ export interface ValidProxy {
   country?: string;
   isp?: string;
   fraud_score?: number;
+  healthScore?: number;
+  isPinned?: boolean;
+}
+
+export interface TestResult {
+    success: boolean;
+    message: string;
+    ip?: string;
+    country?: string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const PINNED_PROXIES_KEY = 'proxy-guardian-pinned';
 
 const Index = () => {
   const [validProxies, setValidProxies] = useState<ValidProxy[]>([]);
   const [activeProxy, setActiveProxy] = useState<ValidProxy | null>(null);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
 
+  // ... (rest of state declarations remain the same) ...
   const [proxyInput, setProxyInput] = useState("");
   const [checkerResults, setCheckerResults] = useState<ValidProxy[]>([]);
   const [isChecking, setIsChecking] = useState(false);
   const [progress, setProgress] = useState(0);
   const { toast } = useToast();
+  const [pinnedProxies, setPinnedProxies] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const savedPinned = localStorage.getItem(PINNED_PROXIES_KEY);
+      if (savedPinned) {
+        setPinnedProxies(JSON.parse(savedPinned));
+      }
+    } catch (error) {
+      console.error("Could not load pinned proxies from local storage", error);
+    }
+  }, []);
+
+  const handleSetPinned = (proxiesToPin: string[], pinStatus: boolean) => {
+    const newPinnedSet = new Set(pinnedProxies);
+    if (pinStatus) {
+      proxiesToPin.forEach(p => newPinnedSet.add(p));
+    } else {
+      proxiesToPin.forEach(p => newPinnedSet.delete(p));
+    }
+    const newPinnedArray = Array.from(newPinnedSet);
+    setPinnedProxies(newPinnedArray);
+    localStorage.setItem(PINNED_PROXIES_KEY, JSON.stringify(newPinnedArray));
+  };
   
+  useEffect(() => {
+    const pinnedStrings = new Set(pinnedProxies);
+    setCheckerResults(prevResults => 
+      prevResults.map(r => ({ ...r, isPinned: pinnedStrings.has(r.proxy) }))
+    );
+  }, [pinnedProxies]);
+
+
   const isCheckingRef = useRef(isChecking);
   useEffect(() => {
     isCheckingRef.current = isChecking;
@@ -44,14 +88,34 @@ const Index = () => {
 
   const handleProxyChanged = (proxy: ValidProxy | null) => {
     setActiveProxy(proxy);
+    setTestResult(null); // Reset test result on proxy change
   };
   
-  const checkProxy = async (proxy: string): Promise<ValidProxy> => {
+  const handleTestConnection = async () => {
+    if (!activeProxy) {
+      toast({ title: "No active proxy to test", variant: "destructive" });
+      return;
+    }
+    setTestResult({ success: false, message: "Testing..."});
+    try {
+      const response = await fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proxy: activeProxy.proxy }),
+      });
+      const data = await response.json();
+      setTestResult(data);
+    } catch (error) {
+      setTestResult({ success: false, message: "Request failed." });
+    }
+  };
+
+  const checkProxy = async (proxy: string, targetUrl: string, checkCount: number, provider: string, apiKey: string): Promise<ValidProxy> => {
     try {
       const response = await fetch('/api/check-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proxy }),
+        body: JSON.stringify({ proxy, targetUrl, checkCount, provider, apiKey }),
       });
 
       if (!response.ok) {
@@ -59,18 +123,20 @@ const Index = () => {
       }
       
       const data = await response.json();
-      return data;
+      return { ...data, isPinned: pinnedProxies.includes(proxy) };
     } catch (error: any) {
       return { 
         proxy, 
         isValid: false, 
         apiType: 'Error',
         portType: 'Error',
+        healthScore: 0,
+        isPinned: pinnedProxies.includes(proxy),
       };
     }
   };
 
-  const handleCheckProxies = async (rateLimit: string) => {
+  const handleCheckProxies = async (rateLimit: string, targetUrl: string, checkCount: number, provider: string, apiKey: string) => {
     isCheckingRef.current = true;
     setIsChecking(true);
     
@@ -82,37 +148,69 @@ const Index = () => {
     }
     
     setProgress(0);
-    setCheckerResults([]);
-
-    const proxies = proxyInput.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    const newResults: ValidProxy[] = [];
+    const pinned = checkerResults.filter(r => r.isPinned);
+    const pinnedStrings = pinned.map(p => p.proxy);
+    const proxiesToCheck = proxyInput.split('\n').map(line => line.trim()).filter(line => line.length > 0 && !pinnedStrings.includes(line));
     
+    setCheckerResults(pinned); // Start with only the pinned proxies
+
+    const newResults: ValidProxy[] = [];
     const requestsPerMinute = parseInt(rateLimit, 10);
     const delay = requestsPerMinute > 0 ? 60000 / requestsPerMinute : 0;
 
-    for (let i = 0; i < proxies.length; i++) {
+    for (let i = 0; i < proxiesToCheck.length; i++) {
       if (!isCheckingRef.current) {
-        toast({ title: "Process Aborted", description: `Checked ${i} of ${proxies.length} proxies.` });
+        toast({ title: "Process Aborted", description: `Checked ${i} of ${proxiesToCheck.length} proxies.` });
         break; 
       }
 
-      const result = await checkProxy(proxies[i]);
+      const result = await checkProxy(proxiesToCheck[i], targetUrl, checkCount, provider, apiKey);
       newResults.push(result);
-      setCheckerResults([...newResults]);
-      setProgress(((i + 1) / proxies.length) * 100);
+      setCheckerResults([...pinned, ...newResults]);
+      setProgress(((i + 1) / proxiesToCheck.length) * 100);
 
-      if (i < proxies.length - 1 && delay > 0) {
+      if (i < proxiesToCheck.length - 1 && delay > 0) {
         await sleep(delay);
       }
     }
     
     if (isCheckingRef.current) {
-        const validCount = newResults.filter(r => r.isValid).length;
-        toast({ title: "Proxy check completed", description: `${validCount}/${newResults.length} proxies are valid.` });
+        const finalResults = [...pinned, ...newResults];
+        const validCount = finalResults.filter(r => r.isValid).length;
+        toast({ title: "Proxy check completed", description: `${validCount}/${finalResults.length} proxies are valid.` });
     }
     
     isCheckingRef.current = false;
     setIsChecking(false);
+  };
+
+  const handleRecheckProxies = async (proxiesToRecheck: string[], targetUrl: string, checkCount: number, provider: string, apiKey: string) => {
+    setIsChecking(true);
+    toast({ title: "Re-checking selected proxies..." });
+
+    for (let i = 0; i < proxiesToRecheck.length; i++) {
+      const proxy = proxiesToRecheck[i];
+      const result = await checkProxy(proxy, targetUrl, checkCount, provider, apiKey);
+      
+      setCheckerResults(prevResults => 
+        prevResults.map(p => p.proxy === proxy ? result : p)
+      );
+    }
+    
+    setIsChecking(false);
+    toast({ title: "Re-check complete!" });
+  };
+
+  const handleRemoveResults = (proxiesToRemove: string[]) => {
+    const pinnedStrings = checkerResults.filter(r => r.isPinned).map(r => r.proxy);
+    const unpinnedToRemove = proxiesToRemove.filter(p => !pinnedStrings.includes(p));
+
+    if (proxiesToRemove.length > 0 && unpinnedToRemove.length === 0) {
+        toast({ title: "Cannot remove pinned proxies.", description: "Please unpin them first if you wish to remove them.", variant: "destructive"});
+        return;
+    }
+    setCheckerResults(prev => prev.filter(r => !unpinnedToRemove.includes(r.proxy)));
+    toast({ title: `Removed ${unpinnedToRemove.length} proxies from results.` });
   };
   
   const handleAbort = () => {
@@ -121,7 +219,8 @@ const Index = () => {
   };
   
   const handleClearResults = () => {
-    setCheckerResults([]);
+    setCheckerResults(prev => prev.filter(r => r.isPinned));
+    toast({ title: "Cleared unpinned results." });
   }
 
   return (
@@ -181,6 +280,9 @@ const Index = () => {
               onCheckProxies={handleCheckProxies}
               onAbort={handleAbort}
               onClearResults={handleClearResults}
+              onRemoveResults={handleRemoveResults}
+              onRecheckProxies={handleRecheckProxies}
+              onSetPinned={handleSetPinned}
             />
           </TabsContent>
 
@@ -188,6 +290,8 @@ const Index = () => {
             <ProxySwitcher 
               validProxies={validProxies} 
               onProxyChanged={handleProxyChanged}
+              onTestConnection={handleTestConnection}
+              testResult={testResult}
             />
           </TabsContent>
 
