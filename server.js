@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
+import puppeteer from 'puppeteer';
 
 dotenv.config();
 
@@ -75,7 +76,6 @@ app.post('/api/check-proxy', async (req, res) => {
     }
 });
 
-// UPDATED /api/test-connection ENDPOINT
 app.post('/api/test-connection', async (req, res) => {
   const { proxy } = req.body;
   if (!proxy) {
@@ -98,10 +98,9 @@ app.post('/api/test-connection', async (req, res) => {
     const latency = Date.now() - startTime;
 
     if (response.status === 200) {
-      const originIp = response.data.origin.split(',')[0]; // Get the first IP if multiple
+      const originIp = response.data.origin.split(',')[0];
       const headers = response.data.headers;
 
-      // Check anonymity
       let anonymity = 'Unknown';
       if (!headers['X-Forwarded-For'] && !headers['Via']) {
           anonymity = 'Elite (Good Privacy)';
@@ -111,7 +110,6 @@ app.post('/api/test-connection', async (req, res) => {
           anonymity = 'Anonymous';
       }
 
-      // Get Geo info for the proxy's public IP
       const geoResponse = await axios.get(`http://ip-api.com/json/${originIp}?fields=status,message,country,city`);
 
       let location = 'Unknown';
@@ -133,6 +131,118 @@ app.post('/api/test-connection', async (req, res) => {
   } catch (error) {
     console.error(`Test connection for ${proxy} failed:`, error.message);
     res.status(500).json({ success: false, message: 'Connection timed out or failed.' });
+  }
+});
+
+app.post('/api/auto-fill', async (req, res) => {
+  const { email, targetUrl, proxy, selectors } = req.body;
+  
+  if (!email || !targetUrl || !proxy || !selectors) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required parameters: email, targetUrl, proxy, or selectors' 
+    });
+  }
+
+  let browser;
+  try {
+    // Launch browser with proxy
+    const proxyType = getTypeFromPort(proxy);
+    const [proxyHost, proxyPort] = proxy.split(':');
+    
+    const browserArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu'
+    ];
+
+    if (proxyType === 'HTTP' || proxyType === 'HTTPS') {
+      browserArgs.push(`--proxy-server=http://${proxy}`);
+    } else if (proxyType === 'SOCKS4') {
+      browserArgs.push(`--proxy-server=socks4://${proxy}`);
+    } else if (proxyType === 'SOCKS5') {
+      browserArgs.push(`--proxy-server=socks5://${proxy}`);
+    }
+
+    browser = await puppeteer.launch({
+      headless: true,
+      args: browserArgs
+    });
+
+    const page = await browser.newPage();
+    
+    // Set user agent
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+    
+    // Navigate to target URL
+    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+    
+    // Wait a bit for page to fully load
+    await page.waitForTimeout(2000);
+    
+    // Fill email field
+    try {
+      await page.waitForSelector(selectors.emailSelector, { timeout: 10000 });
+      await page.type(selectors.emailSelector, email);
+    } catch (error) {
+      throw new Error(`Could not find email field with selector: ${selectors.emailSelector}`);
+    }
+    
+    // Fill name field if selector provided
+    if (selectors.nameSelector) {
+      try {
+        await page.waitForSelector(selectors.nameSelector, { timeout: 5000 });
+        await page.type(selectors.nameSelector, 'John Doe');
+      } catch (error) {
+        console.log('Name field not found or not required');
+      }
+    }
+    
+    // Fill phone field if selector provided
+    if (selectors.phoneSelector) {
+      try {
+        await page.waitForSelector(selectors.phoneSelector, { timeout: 5000 });
+        await page.type(selectors.phoneSelector, '+1234567890');
+      } catch (error) {
+        console.log('Phone field not found or not required');
+      }
+    }
+    
+    // Submit form
+    try {
+      await page.waitForSelector(selectors.submitSelector, { timeout: 10000 });
+      await page.click(selectors.submitSelector);
+      
+      // Wait for navigation or response
+      await page.waitForTimeout(3000);
+      
+    } catch (error) {
+      throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
+    }
+    
+    res.json({
+      success: true,
+      message: `Successfully submitted form for ${email}`,
+      email: email,
+      proxy: proxy
+    });
+    
+  } catch (error) {
+    console.error(`Auto-fill error for ${email}:`, error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Form submission failed',
+      email: email,
+      proxy: proxy
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 });
 
