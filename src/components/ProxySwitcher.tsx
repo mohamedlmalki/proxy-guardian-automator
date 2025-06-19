@@ -1,17 +1,25 @@
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown } from "lucide-react";
+import { CooldownTimer } from "@/components/CooldownTimer";
+import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown, Filter, RefreshCw, Loader, Ban, PauseCircle, Undo2 } from "lucide-react";
 import { ValidProxy, TestResult, ConnectionLogEntry } from "@/pages/Index";
 
 type SwitchMode = 'time' | 'requests';
-export type RotationStrategy = 'sequential' | 'random' | 'health-based' | 'latency-based' | 'aggressive';
+type FilterMode = 'whitelist' | 'blacklist';
+// Add "adaptive" to the list of strategies
+export type RotationStrategy = 'sequential' | 'random' | 'health-based' | 'latency-based' | 'aggressive' | 'prioritize-pinned' | 'adaptive';
 
 export interface SessionStat {
   success: number;
@@ -21,6 +29,9 @@ export interface SessionStat {
 interface ProxySwitcherProps {
   validProxies: ValidProxy[];
   onTestConnection: (proxy: string) => void;
+  onReTestProxy: (proxy: string) => Promise<void>;
+  onTempRemove: (proxy: string) => void;
+  onReenableProxy: (proxy: string) => void;
   testResult: TestResult | null;
   connectionLog: ConnectionLogEntry[];
   sessionStats: Record<string, SessionStat>;
@@ -32,6 +43,18 @@ interface ProxySwitcherProps {
   successfulRequests: number;
   switchRequestCount: number;
   setSwitchRequestCount: (count: number) => void;
+  loopCount: number;
+  setLoopCount: (count: number) => void;
+  cooldownMinutes: number;
+  setCooldownMinutes: (minutes: number) => void;
+  retestOnStart: boolean;
+  setRetestOnStart: (retest: boolean) => void;
+  filterMode: FilterMode;
+  setFilterMode: (mode: FilterMode) => void;
+  countryFilterList: string;
+  setCountryFilterList: (list: string) => void;
+  ispFilterList: string;
+  setIspFilterList: (list: string) => void;
   switchMode: SwitchMode;
   setSwitchMode: (mode: SwitchMode) => void;
   rotationStrategy: RotationStrategy; 
@@ -42,14 +65,19 @@ interface ProxySwitcherProps {
   onResume: () => void;
   onManualSwitch: () => void;
   onSendToTop: (proxy: string) => void;
+  onResetDowned: () => void;
   currentProxyIndex: number;
-  downedProxies: Set<string>;
+  downedProxies: Map<string, number>;
+  manualRemovals: Set<string>;
 }
 
 export const ProxySwitcher = (props: ProxySwitcherProps) => {
   const {
     validProxies,
     onTestConnection,
+    onReTestProxy,
+    onTempRemove,
+    onReenableProxy,
     connectionLog,
     sessionStats,
     switcherStatus,
@@ -60,6 +88,18 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     successfulRequests,
     switchRequestCount,
     setSwitchRequestCount,
+    loopCount,
+    setLoopCount,
+    cooldownMinutes,
+    setCooldownMinutes,
+    retestOnStart,
+    setRetestOnStart,
+    filterMode,
+    setFilterMode,
+    countryFilterList,
+    setCountryFilterList,
+    ispFilterList,
+    setIspFilterList,
     switchMode,
     setSwitchMode,
     rotationStrategy,
@@ -70,11 +110,44 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     onResume,
     onManualSwitch,
     onSendToTop,
+    onResetDowned,
     currentProxyIndex,
     downedProxies,
+    manualRemovals
   } = props;
 
-  const activeProxies = validProxies.filter(p => p.isValid && !downedProxies.has(p.proxy));
+  const [visibleProxyCount, setVisibleProxyCount] = useState(5);
+  const [testingProxy, setTestingProxy] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<ConnectionLogEntry | null>(null);
+
+  const allValidProxies = validProxies.filter(p => p.isValid);
+  const totalValidProxies = allValidProxies.length;
+  
+  useEffect(() => {
+    const defaultCount = totalValidProxies > 5 ? 5 : totalValidProxies;
+    if (totalValidProxies > 0 && visibleProxyCount > totalValidProxies) {
+      setVisibleProxyCount(totalValidProxies);
+    } else if (totalValidProxies === 0 && visibleProxyCount !== 1) {
+       setVisibleProxyCount(1);
+    } else if (visibleProxyCount === 1 && totalValidProxies > 1) {
+       setVisibleProxyCount(defaultCount);
+    }
+  }, [totalValidProxies, visibleProxyCount]);
+  
+  const handleReTestClick = async (proxy: string) => {
+    setTestingProxy(proxy);
+    await onReTestProxy(proxy);
+    setTestingProxy(null);
+  }
+
+  const activeProxies = validProxies.filter(p => {
+    if (!p.isValid) return false;
+    if (manualRemovals.has(p.proxy)) return false;
+    const failureTimestamp = downedProxies.get(p.proxy);
+    if (!failureTimestamp) return true;
+    return (Date.now() - failureTimestamp) >= (cooldownMinutes * 60 * 1000);
+  });
+
   const timeProgress = remainingTime > 0 && switchInterval > 0 ? ((switchInterval - remainingTime) / switchInterval) * 100 : 0;
   const requestProgress = successfulRequests > 0 && switchRequestCount > 0 ? (successfulRequests / switchRequestCount) * 100 : 0;
   
@@ -94,6 +167,8 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     'health-based': 'Health-Based',
     'latency-based': 'Latency-Based',
     aggressive: 'Aggressive (Switch on Fail)',
+    'prioritize-pinned': 'Prioritize Pinned',
+    adaptive: 'Adaptive (Smart)', // Add the label for the new strategy
   };
 
   return (
@@ -129,6 +204,9 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                             <DropdownMenuRadioItem value="health-based">Health-Based</DropdownMenuRadioItem>
                             <DropdownMenuRadioItem value="latency-based">Latency-Based</DropdownMenuRadioItem>
                             <DropdownMenuRadioItem value="aggressive">Aggressive (Switch on Fail)</DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="prioritize-pinned">Prioritize Pinned</DropdownMenuRadioItem>
+                            {/* Add the new item to the dropdown */}
+                            <DropdownMenuRadioItem value="adaptive">Adaptive (Smart)</DropdownMenuRadioItem>
                           </DropdownMenuRadioGroup>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -146,7 +224,47 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                 <Input id="request-count" type="number" min="1" max="100" value={switchRequestCount} onChange={(e) => setSwitchRequestCount(parseInt(e.target.value) || 10)} disabled={isRunningOrPaused || rotationStrategy === 'aggressive'} className="bg-slate-900/50 border-slate-600 text-white" />
               </div>
             )}
+            
+            <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                    <Label htmlFor="loop-count" className="text-white flex items-center"><Repeat className="w-4 h-4 mr-2"/>Number of loops (0 for infinite)</Label>
+                    <Input id="loop-count" type="number" min="0" value={loopCount} onChange={(e) => setLoopCount(parseInt(e.target.value, 10) || 0)} disabled={isRunningOrPaused} className="bg-slate-900/50 border-slate-600 text-white" />
+                </div>
+                 <div className="space-y-2">
+                    <Label htmlFor="cooldown-minutes" className="text-white flex items-center"><Timer className="w-4 h-4 mr-2"/>Cooldown (minutes)</Label>
+                    <Input id="cooldown-minutes" type="number" min="0" value={cooldownMinutes} onChange={(e) => setCooldownMinutes(parseInt(e.target.value, 10) || 0)} disabled={isRunningOrPaused} className="bg-slate-900/50 border-slate-600 text-white" />
+                </div>
+            </div>
 
+            <Separator className="my-4 bg-slate-700"/>
+
+            <div className="space-y-3">
+                <div className="flex items-center space-x-2">
+                    <Filter className="w-5 h-5 text-cyan-400"/>
+                    <Label className="text-white text-base">Proxy Filtering</Label>
+                </div>
+                <RadioGroup value={filterMode} onValueChange={(value: FilterMode) => setFilterMode(value)} className="flex space-x-4" disabled={isRunningOrPaused}>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="whitelist" id="whitelist" /><Label htmlFor="whitelist" className="text-white">Whitelist (Only Use)</Label></div>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="blacklist" id="blacklist" /><Label htmlFor="blacklist" className="text-white">Blacklist (Avoid)</Label></div>
+                </RadioGroup>
+                 <div className="space-y-2">
+                    <Label htmlFor="country-list" className="text-gray-400 text-xs">Countries (e.g. US, GB, DE)</Label>
+                    <Input id="country-list" placeholder="Comma-separated country codes" value={countryFilterList} onChange={(e) => setCountryFilterList(e.target.value)} disabled={isRunningOrPaused} className="bg-slate-900/50 border-slate-600 text-white" />
+                 </div>
+                 <div className="space-y-2">
+                    <Label htmlFor="isp-list" className="text-gray-400 text-xs">ISPs (e.g. Comcast, Google)</Label>
+                    <Input id="isp-list" placeholder="Comma-separated ISP names" value={ispFilterList} onChange={(e) => setIspFilterList(e.target.value)} disabled={isRunningOrPaused} className="bg-slate-900/50 border-slate-600 text-white" />
+                 </div>
+            </div>
+
+            <Separator className="my-4 bg-slate-700"/>
+
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2">
+                <Switch id="retest-switch" checked={retestOnStart} onCheckedChange={setRetestOnStart} disabled={isRunningOrPaused} />
+                <Label htmlFor="retest-switch" className="text-white text-xs">Re-test all before starting</Label>
+              </div>
+            </div>
 
             <div className="flex space-x-2">
               {switcherStatus === 'stopped' && (
@@ -160,7 +278,10 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
               )}
                <Button onClick={onManualSwitch} disabled={switcherStatus !== 'running'} variant="outline" className="border-slate-600 text-white hover:bg-slate-700"><RotateCcw className="w-4 h-4" /></Button>
               {isRunningOrPaused && (
+                <>
                  <Button onClick={onStop} variant="destructive" size="icon" title="Stop and Reset"><Power className="w-4 h-4" /></Button>
+                 <Button onClick={onResetDowned} variant="outline" size="icon" title="Reset Downed Proxies" disabled={downedProxies.size === 0 && manualRemovals.size === 0}><ShieldX className="w-4 h-4" /></Button>
+                </>
               )}
             </div>
 
@@ -216,16 +337,20 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
       <div className="space-y-6">
         <Card className="bg-slate-800/50 border-slate-700">
             <CardHeader>
-                <CardTitle className="flex items-center space-x-2 text-white"><ListChecks className="w-5 h-5 text-yellow-400" /><span>Connection Log</span></CardTitle>
-                <CardDescription className="text-gray-400">Status of recent connections.</CardDescription>
+                <div className="flex justify-between items-center">
+                    <div>
+                        <CardTitle className="flex items-center space-x-2 text-white"><ListChecks className="w-5 h-5 text-yellow-400" /><span>Connection Log</span></CardTitle>
+                        <CardDescription className="text-gray-400">Status of recent connections. Click an entry for details.</CardDescription>
+                    </div>
+                </div>
             </CardHeader>
             <CardContent>
                 {connectionLog.length === 0 ? (
                     <div className="text-center py-6 text-gray-500"><p>No connection history yet.</p></div>
                 ) : (
-                    <div className="space-y-2 max-h-[240px] overflow-y-auto">
+                    <div className="space-y-2 max-h-[240px] overflow-y-auto pr-2">
                         {connectionLog.map((log, index) => (
-                            <div key={index} className={`p-2 rounded-lg text-xs border ${log.success ? 'bg-green-900/20 border-green-500/30' : 'bg-red-900/20 border-red-500/30'}`}>
+                            <div key={index} onClick={() => setSelectedLog(log)} className={`p-2 rounded-lg text-xs border cursor-pointer hover:border-slate-400 ${log.success ? 'bg-green-900/20 border-green-500/30' : 'bg-red-900/20 border-red-500/30'}`}>
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center space-x-2">
                                         {log.success ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-red-500" />}
@@ -237,7 +362,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                                     <div className="pl-6 pt-1 text-gray-300">
                                         {log.latency}ms - {log.location} - {log.anonymity}
                                     </div>
-                                ) : <div className="pl-6 pt-1 text-gray-400">{log.message}</div>}
+                                ) : <div className="pl-6 pt-1 text-gray-400 truncate">{log.message}</div>}
                             </div>
                         ))}
                     </div>
@@ -247,76 +372,191 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
         
         <Card className="bg-slate-800/50 border-slate-700">
           <CardHeader>
-            <CardTitle className="text-white">Available Proxies</CardTitle>
-            <CardDescription className="text-gray-400">{activeProxies.length} active / {downedProxies.size} temporarily down</CardDescription>
+            <div className="flex justify-between items-center">
+                <div>
+                    <CardTitle className="text-white">Available Proxies</CardTitle>
+                    <CardDescription className="text-gray-400">{activeProxies.length} active / {downedProxies.size} on cooldown / {manualRemovals.size} removed</CardDescription>
+                </div>
+            </div>
           </CardHeader>
           <CardContent>
-            {validProxies.filter(p => p.isValid).length === 0 ? (
+            {totalValidProxies === 0 ? (
               <div className="text-center py-6 text-gray-500"><Timer className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>No valid proxies available</p></div>
             ) : (
               <TooltipProvider>
-                <div className="space-y-2 max-h-[150px] overflow-y-auto">
-                  {validProxies.filter(p => p.isValid).map((proxy, index) => {
-                    const isDown = downedProxies.has(proxy.proxy);
-                    const isActive = currentProxy?.proxy === proxy.proxy && isRunningOrPaused;
-                    const stats = sessionStats[proxy.proxy] ?? { success: 0, fail: 0 };
-                    return (
-                        <div key={proxy.proxy} className={`p-3 rounded-lg border transition-all duration-200 ${isDown ? 'opacity-50 bg-red-900/10 border-red-500/20' : ''} ${isActive ? 'bg-purple-900/30 border-purple-500/50' : 'bg-slate-900/30 border-slate-600/50'}`}>
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center space-x-2">
-                                {isDown ? <ShieldX className="h-4 w-4 text-red-500" /> : (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="visible-proxies" className="text-white">Showing: {Math.min(visibleProxyCount, totalValidProxies)} of {totalValidProxies}</Label>
+                        <Slider 
+                            id="visible-proxies"
+                            min={1}
+                            max={totalValidProxies > 0 ? totalValidProxies : 1}
+                            step={1}
+                            value={[visibleProxyCount]}
+                            onValueChange={(value) => setVisibleProxyCount(value[0])}
+                        />
+                    </div>
+                    <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
+                      {allValidProxies.slice(0, visibleProxyCount).map((proxy) => {
+                        const isDown = downedProxies.has(proxy.proxy);
+                        const isManuallyRemoved = manualRemovals.has(proxy.proxy);
+                        const isActive = currentProxy?.proxy === proxy.proxy && isRunningOrPaused;
+                        const stats = sessionStats[proxy.proxy] ?? { success: 0, fail: 0 };
+                        const failureTimestamp = downedProxies.get(proxy.proxy);
+
+                        let itemClass = isActive ? 'bg-purple-900/30 border-purple-500/50' : 'bg-slate-900/30 border-slate-600/50';
+                        if (isDown) itemClass = 'opacity-50 bg-red-900/10 border-red-500/20';
+                        if (isManuallyRemoved) itemClass = 'opacity-60 bg-yellow-900/10 border-yellow-500/20';
+                        
+                        return (
+                            <div key={proxy.proxy} className={`p-3 rounded-lg border transition-all duration-200 ${itemClass}`}>
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center space-x-2">
+                                    {isDown ? <ShieldX className="h-4 w-4 text-red-500" /> : 
+                                     isManuallyRemoved ? <PauseCircle className="h-4 w-4 text-yellow-400" /> :
+                                     (
+                                        <Tooltip>
+                                            <TooltipTrigger>
+                                            <span className={`h-2.5 w-2.5 rounded-full ${getHealthIndicatorClass(proxy.healthScore)}`}></span>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                            <p>Health: {proxy.healthScore?.toFixed(0) ?? 'N/A'}%</p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    )}
+                                    <span className="text-white font-mono text-xs">{proxy.proxy}</span>
+                                    </div>
+                                    <div className="flex items-center space-x-1">
+                                    {isManuallyRemoved ? (
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                            <Button 
+                                                size="icon" 
+                                                variant="ghost" 
+                                                className="h-6 w-6 text-yellow-400 hover:text-white" 
+                                                onClick={() => onReenableProxy(proxy.proxy)}
+                                            >
+                                                <Undo2 className="h-4 w-4" />
+                                            </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                            <p>Re-enable Proxy</p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    ) : (
+                                        <>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                <Button 
+                                                    size="icon" 
+                                                    variant="ghost" 
+                                                    className="h-6 w-6 text-gray-400 hover:text-white" 
+                                                    onClick={() => handleReTestClick(proxy.proxy)}
+                                                    disabled={testingProxy === proxy.proxy || isDown}
+                                                >
+                                                    {testingProxy === proxy.proxy ? <Loader className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                                </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                <p>Re-test Proxy</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button 
+                                                        size="icon" 
+                                                        variant="ghost" 
+                                                        className="h-6 w-6 text-gray-400 hover:text-red-500" 
+                                                        onClick={() => onTempRemove(proxy.proxy)}
+                                                        disabled={isDown}
+                                                    >
+                                                        <Ban className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>Temporarily Remove</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </>
+                                    )}
                                     <Tooltip>
-                                        <TooltipTrigger>
-                                        <span className={`h-2.5 w-2.5 rounded-full ${getHealthIndicatorClass(proxy.healthScore)}`}></span>
+                                        <TooltipTrigger asChild>
+                                        <Button 
+                                            size="icon" 
+                                            variant="ghost" 
+                                            className="h-6 w-6 text-gray-400 hover:text-white" 
+                                            onClick={() => onSendToTop(proxy.proxy)}
+                                            disabled={allValidProxies.indexOf(proxy) === 0 || isDown || isManuallyRemoved}
+                                        >
+                                            <ArrowUp className="h-4 w-4" />
+                                        </Button>
                                         </TooltipTrigger>
                                         <TooltipContent>
-                                        <p>Health: {proxy.healthScore?.toFixed(0) ?? 'N/A'}%</p>
+                                        <p>Send to Top</p>
                                         </TooltipContent>
                                     </Tooltip>
-                                )}
-                                <span className="text-white font-mono text-xs">{proxy.proxy}</span>
+                                    <Badge variant="outline" className="text-xs">{proxy.portType}</Badge>
+                                    </div>
                                 </div>
-                                <div className="flex items-center space-x-1">
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                    <Button 
-                                        size="icon" 
-                                        variant="ghost" 
-                                        className="h-6 w-6 text-gray-400 hover:text-white" 
-                                        onClick={() => onSendToTop(proxy.proxy)}
-                                        disabled={index === 0 || isDown}
-                                    >
-                                        <ArrowUp className="h-4 w-4" />
-                                    </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                    <p>Send to Top</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                                <Badge variant="outline" className="text-xs">{proxy.portType}</Badge>
+                                <div className="mt-2 flex items-center space-x-3 text-xs text-gray-400">
+                                    {isDown && failureTimestamp && !isManuallyRemoved ? (
+                                        <div className="flex items-center space-x-1.5 w-full">
+                                            <Timer className="w-3 h-3 text-red-400" />
+                                            <CooldownTimer cooldownEndTime={failureTimestamp + cooldownMinutes * 60 * 1000} />
+                                        </div>
+                                    ) : !(isDown || isManuallyRemoved) ? (
+                                        <>
+                                            <div className="flex items-center space-x-1" title="Initial Health Score"><HeartPulse className="w-3 h-3 text-green-400"/><span>{proxy.healthScore?.toFixed(0) ?? 'N/A'}%</span></div>
+                                            <div className="flex items-center space-x-1" title="Initial Latency"><Zap className="w-3 h-3 text-yellow-400"/><span>{proxy.latency ?? 'N/A'}ms</span></div>
+                                            <div className="flex items-center space-x-1" title="Location"><MapPin className="w-3 h-3 text-blue-400"/><span>{proxy.location ?? '??'}</span></div>
+                                            { (stats.success > 0 || stats.fail > 0) &&
+                                                <div className="flex items-center space-x-2 ml-auto">
+                                                    <div className="flex items-center space-x-1 text-green-500" title="Session Successes"><ThumbsUp className="w-3 h-3"/><span>{stats.success}</span></div>
+                                                    <div className="flex items-center space-x-1 text-red-500" title="Session Fails"><ThumbsDown className="w-3 h-3"/><span>{stats.fail}</span></div>
+                                                </div>
+                                            }
+                                        </>
+                                    ) : null}
                                 </div>
                             </div>
-                            {!isDown && (
-                                <div className="mt-2 flex items-center space-x-3 text-xs text-gray-400">
-                                    <div className="flex items-center space-x-1" title="Initial Health Score"><HeartPulse className="w-3 h-3 text-green-400"/><span>{proxy.healthScore?.toFixed(0) ?? 'N/A'}%</span></div>
-                                    <div className="flex items-center space-x-1" title="Initial Latency"><Zap className="w-3 h-3 text-yellow-400"/><span>{proxy.latency ?? 'N/A'}ms</span></div>
-                                    <div className="flex items-center space-x-1" title="Location"><MapPin className="w-3 h-3 text-blue-400"/><span>{proxy.location ?? '??'}</span></div>
-                                    { (stats.success > 0 || stats.fail > 0) &&
-                                        <div className="flex items-center space-x-2 ml-auto">
-                                            <div className="flex items-center space-x-1 text-green-500" title="Session Successes"><ThumbsUp className="w-3 h-3"/><span>{stats.success}</span></div>
-                                            <div className="flex items-center space-x-1 text-red-500" title="Session Fails"><ThumbsDown className="w-3 h-3"/><span>{stats.fail}</span></div>
-                                        </div>
-                                    }
-                                </div>
-                            )}
-                        </div>
-                    );
-                  })}
-                </div>
+                        );
+                      })}
+                    </div>
+                  </div>
               </TooltipProvider>
             )}
           </CardContent>
         </Card>
+        
+        <Dialog open={selectedLog !== null} onOpenChange={(isOpen) => !isOpen && setSelectedLog(null)}>
+            <DialogContent className="bg-slate-800 text-white border-slate-700">
+                <DialogHeader>
+                <DialogTitle>Log Entry Details</DialogTitle>
+                <DialogDescription>
+                    Detailed information for the connection attempt at {selectedLog?.timestamp}.
+                </DialogDescription>
+                </DialogHeader>
+                {selectedLog && (
+                    <div className="text-sm space-y-2">
+                        <p><strong className="text-slate-400">Proxy:</strong> <span className="font-mono">{selectedLog.proxy}</span></p>
+                        <p><strong className="text-slate-400">Status:</strong> {selectedLog.success ? <span className="text-green-400">Success</span> : <span className="text-red-400">Failure</span>}</p>
+                        {selectedLog.success ? (
+                            <>
+                             <p><strong className="text-slate-400">Latency:</strong> {selectedLog.latency}ms</p>
+                             <p><strong className="text-slate-400">IP Address:</strong> {selectedLog.ip}</p>
+                             <p><strong className="text-slate-400">Location:</strong> {selectedLog.location}</p>
+                             <p><strong className="text-slate-400">Anonymity:</strong> {selectedLog.anonymity}</p>
+                            </>
+                        ) : (
+                            selectedLog.statusCode && <p><strong className="text-slate-400">Status Code:</strong> <span className="font-mono text-red-400">{selectedLog.statusCode}</span></p>
+                        )}
+                        <p><strong className="text-slate-400">Details:</strong></p>
+                        <pre className="p-2 bg-slate-900 rounded-md text-slate-300 text-xs whitespace-pre-wrap">{selectedLog.message}</pre>
+                    </div>
+                )}
+            </DialogContent>
+        </Dialog>
+
       </div>
     </div>
   );

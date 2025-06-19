@@ -25,9 +25,24 @@ const getTypeFromPort = (proxyString) => {
   }
 };
 
+// This function provides more detailed error messages
+const getErrorMessage = (error) => {
+    if (error.response) {
+        // The request was made and the server responded with a status code
+        return `Request failed with status: ${error.response.status} ${error.response.statusText}`;
+    } else if (error.request) {
+        // The request was made but no response was received
+        return 'No response from server. Check proxy connection or target URL.';
+    } else {
+        // Something happened in setting up the request that triggered an Error
+        return error.message;
+    }
+};
+
 app.post('/api/check-proxy', async (req, res) => {
     const { proxy, checkCount = 1 } = req.body;
     if (!proxy) { return res.status(400).json({ isValid: false, error: 'Invalid proxy format' }); }
+    
     let agent;
     const proxyType = getTypeFromPort(proxy);
     if (proxyType === 'SOCKS4' || proxyType === 'SOCKS5') {
@@ -35,10 +50,12 @@ app.post('/api/check-proxy', async (req, res) => {
     } else {
         agent = new HttpsProxyAgent(`http://${proxy}`);
     }
+
     const validationUrl = 'https://httpbin.org/get';
     let successes = 0;
     let totalLatency = 0;
     let anonymity = 'Unknown';
+
     for (let i = 0; i < checkCount; i++) {
         try {
             const startTime = Date.now();
@@ -52,14 +69,17 @@ app.post('/api/check-proxy', async (req, res) => {
                 else { anonymity = 'Anonymous'; }
             }
         } catch (error) {
-            console.error(`Check ${i + 1} for ${proxy} failed: ${error.message}`);
+            console.error(`Check ${i + 1} for ${proxy} failed: ${getErrorMessage(error)}`);
         }
     }
+
     const healthScore = (successes / checkCount) * 100;
     const averageLatency = successes > 0 ? Math.round(totalLatency / successes) : -1;
+
     if (successes === 0) {
         return res.json({ proxy, isValid: false, portType: 'Unreachable', healthScore });
     }
+
     try {
         const ipAddress = proxy.split(':')[0];
         const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,proxy,hosting`);
@@ -71,8 +91,8 @@ app.post('/api/check-proxy', async (req, res) => {
             apiType: geoResponse.data.proxy ? 'Proxy' : (geoResponse.data.hosting ? 'Hosting' : 'Direct'),
         });
     } catch (error) {
-        console.error(`Check for ${proxy} failed: ${error.message}`);
-        res.json({ proxy, isValid: false, portType: 'Unreachable', healthScore: 0 });
+        console.error(`Geo check for ${proxy} failed: ${error.message}`);
+        res.json({ proxy, isValid: true, latency: averageLatency, healthScore, anonymity, portType: proxyType });
     }
 });
 
@@ -97,40 +117,41 @@ app.post('/api/test-connection', async (req, res) => {
     const response = await axios.get(testUrl, { httpsAgent: agent, timeout: 10000 });
     const latency = Date.now() - startTime;
 
-    if (response.status === 200) {
-      const originIp = response.data.origin.split(',')[0];
-      const headers = response.data.headers;
+    const originIp = response.data.origin.split(',')[0];
+    const headers = response.data.headers;
 
-      let anonymity = 'Unknown';
-      if (!headers['X-Forwarded-For'] && !headers['Via']) {
-          anonymity = 'Elite (Good Privacy)';
-      } else if (headers['X-Forwarded-For']) {
-          anonymity = 'Transparent (IP Exposed)';
-      } else {
-          anonymity = 'Anonymous';
-      }
-
-      const geoResponse = await axios.get(`http://ip-api.com/json/${originIp}?fields=status,message,country,city`);
-
-      let location = 'Unknown';
-      if (geoResponse.data.status === 'success') {
-        location = `${geoResponse.data.city || 'N/A'}, ${geoResponse.data.country || 'N/A'}`;
-      }
-
-      res.json({
-        success: true,
-        message: `Latency: ${latency}ms, IP: ${originIp}`,
-        ip: originIp,
-        anonymity: anonymity,
-        location: location,
-        latency: latency,
-      });
+    let anonymity = 'Unknown';
+    if (!headers['X-Forwarded-For'] && !headers['Via']) {
+        anonymity = 'Elite (Good Privacy)';
+    } else if (headers['X-Forwarded-For']) {
+        anonymity = 'Transparent (IP Exposed)';
     } else {
-      res.json({ success: false, message: `Failed with status: ${response.status}` });
+        anonymity = 'Anonymous';
     }
+
+    const geoResponse = await axios.get(`http://ip-api.com/json/${originIp}?fields=status,message,country,city`);
+
+    let location = 'Unknown';
+    if (geoResponse.data.status === 'success') {
+      location = `${geoResponse.data.city || 'N/A'}, ${geoResponse.data.country || 'N/A'}`;
+    }
+
+    res.json({
+      success: true,
+      message: `Latency: ${latency}ms, IP: ${originIp}`,
+      ip: originIp,
+      anonymity: anonymity,
+      location: location,
+      latency: latency,
+    });
   } catch (error) {
-    console.error(`Test connection for ${proxy} failed:`, error.message);
-    res.status(500).json({ success: false, message: 'Connection timed out or failed.' });
+    const errorMessage = getErrorMessage(error);
+    console.error(`Test connection for ${proxy} failed:`, errorMessage);
+    res.status(500).json({ 
+        success: false, 
+        message: errorMessage,
+        statusCode: error.response?.status 
+    });
   }
 });
 
@@ -146,9 +167,7 @@ app.post('/api/auto-fill', async (req, res) => {
 
   let browser;
   try {
-    // Launch browser with proxy
     const proxyType = getTypeFromPort(proxy);
-    const [proxyHost, proxyPort] = proxy.split(':');
     
     const browserArgs = [
       '--no-sandbox',
@@ -174,17 +193,10 @@ app.post('/api/auto-fill', async (req, res) => {
     });
 
     const page = await browser.newPage();
-    
-    // Set user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-    
-    // Navigate to target URL
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-    
-    // Wait a bit for page to fully load
     await page.waitForTimeout(2000);
     
-    // Fill email field
     try {
       await page.waitForSelector(selectors.emailSelector, { timeout: 10000 });
       await page.type(selectors.emailSelector, email);
@@ -192,7 +204,6 @@ app.post('/api/auto-fill', async (req, res) => {
       throw new Error(`Could not find email field with selector: ${selectors.emailSelector}`);
     }
     
-    // Fill name field if selector provided
     if (selectors.nameSelector) {
       try {
         await page.waitForSelector(selectors.nameSelector, { timeout: 5000 });
@@ -202,7 +213,6 @@ app.post('/api/auto-fill', async (req, res) => {
       }
     }
     
-    // Fill phone field if selector provided
     if (selectors.phoneSelector) {
       try {
         await page.waitForSelector(selectors.phoneSelector, { timeout: 5000 });
@@ -212,14 +222,10 @@ app.post('/api/auto-fill', async (req, res) => {
       }
     }
     
-    // Submit form
     try {
       await page.waitForSelector(selectors.submitSelector, { timeout: 10000 });
       await page.click(selectors.submitSelector);
-      
-      // Wait for navigation or response
       await page.waitForTimeout(3000);
-      
     } catch (error) {
       throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
     }
@@ -245,6 +251,49 @@ app.post('/api/auto-fill', async (req, res) => {
     }
   }
 });
+
+app.post('/api/custom-test', async (req, res) => {
+  const { proxy, targetUrl } = req.body;
+
+  if (!proxy || !targetUrl) {
+    return res.status(400).json({ success: false, message: 'Proxy and targetUrl are required.' });
+  }
+
+  let agent;
+  const proxyType = getTypeFromPort(proxy);
+  if (proxyType === 'SOCKS4' || proxyType === 'SOCKS5') {
+      agent = new SocksProxyAgent(`socks://${proxy}`);
+  } else {
+      agent = new HttpsProxyAgent(`http://${proxy}`);
+  }
+
+  try {
+    const startTime = Date.now();
+    const response = await axios.get(targetUrl, {
+      httpsAgent: agent,
+      timeout: 15000 
+    });
+    const latency = Date.now() - startTime;
+
+    res.json({
+      success: true,
+      message: `Successfully received response from your endpoint.`,
+      status: response.status,
+      latency: latency,
+      data: response.data,
+    });
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    console.error(`Custom test for ${proxy} to ${targetUrl} failed:`, errorMessage);
+    res.status(500).json({ 
+        success: false, 
+        message: errorMessage,
+        statusCode: error.response?.status,
+        error: error.message
+    });
+  }
+});
+
 
 const PORT = 3001;
 app.listen(PORT, () => {

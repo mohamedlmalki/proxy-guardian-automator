@@ -3,9 +3,10 @@ import { ProxyChecker } from "@/components/ProxyChecker";
 import { ProxySwitcher, RotationStrategy, SessionStat } from "@/components/ProxySwitcher";
 import { AutoFillForm, FormSelectors } from "@/components/AutoFillForm";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
+import { IpTester } from "@/components/IpTester";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, RotateCcw, FormInput, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download } from "lucide-react";
+import { Shield, RotateCcw, FormInput, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -13,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
 type SwitchMode = 'time' | 'requests';
+type FilterMode = 'whitelist' | 'blacklist';
 
 // --- DATA STRUCTURES ---
 export interface ValidProxy {
@@ -39,6 +41,7 @@ export interface TestResult {
     anonymity?: string;
     location?: string;
     latency?: number;
+    statusCode?: number;
 }
 
 export interface ConnectionLogEntry extends TestResult {
@@ -58,7 +61,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const PINNED_PROXIES_KEY = 'proxy-guardian-pinned';
 const PROFILES_KEY = 'proxy-guardian-profiles';
 const NOTIFICATIONS_KEY = 'proxy-guardian-notifications-enabled';
-
+const MAX_REASONABLE_LATENCY = 3000; // ms
 
 const Index = () => {
   // --- STATE MANAGEMENT ---
@@ -79,7 +82,15 @@ const Index = () => {
   const [switchInterval, setSwitchInterval] = useState(30);
   const [remainingTime, setRemainingTime] = useState(0);
   const [switchCount, setSwitchCount] = useState(0);
-  const [downedProxies, setDownedProxies] = useState<Set<string>>(new Set());
+  const [loopCount, setLoopCount] = useState(0);
+  const [initialValidCount, setInitialValidCount] = useState(0);
+  const [downedProxies, setDownedProxies] = useState<Map<string, number>>(new Map());
+  const [manualRemovals, setManualRemovals] = useState<Set<string>>(new Set());
+  const [cooldownMinutes, setCooldownMinutes] = useState(5);
+  const [retestOnStart, setRetestOnStart] = useState(true);
+  const [filterMode, setFilterMode] = useState<FilterMode>('whitelist');
+  const [countryFilterList, setCountryFilterList] = useState('');
+  const [ispFilterList, setIspFilterList] = useState('');
   const [switchMode, setSwitchMode] = useState<SwitchMode>('time');
   const [rotationStrategy, setRotationStrategy] = useState<RotationStrategy>('sequential');
   const [successfulRequests, setSuccessfulRequests] = useState(0);
@@ -232,41 +243,132 @@ const Index = () => {
 
 
   // --- SWITCH LOGIC ---
+  const handleResetDowned = () => {
+    setDownedProxies(new Map());
+    setManualRemovals(new Set());
+    toast({ title: "Downed & Removed Proxies Cleared", description: "All temporarily ignored proxies have been reset." });
+  };
+  
+  const handleStopSwitcher = useCallback(() => {
+    setSwitcherStatus('stopped');
+    setRemainingTime(0);
+    setSuccessfulRequests(0);
+    setActiveProxy(null);
+    notify("Proxy Switcher Stopped");
+    toast({ title: "Proxy switcher stopped" });
+  }, [notify, toast]);
+
   const switchProxy = useCallback(async (isInitialStart = false) => {
     if (isSwitchingRef.current) return;
     isSwitchingRef.current = true;
 
-    const findNextWorkingProxy = async (): Promise<ValidProxy | null> => {
-        let availableProxies = validProxies.filter(p => p.isValid && !downedProxies.has(p.proxy));
+    if (!isInitialStart && loopCount > 0) {
+        if (initialValidCount > 0 && switchCount >= (loopCount * initialValidCount) -1) {
+             handleStopSwitcher();
+             toast({ title: "Loop Limit Reached", description: `Switcher stopped after completing ${loopCount} loop(s).` });
+             isSwitchingRef.current = false;
+             return;
+        }
+    }
 
+    const findNextWorkingProxy = async (): Promise<{ proxy: ValidProxy; newLatency: number } | null> => {
+        const cooldownMs = cooldownMinutes * 60 * 1000;
+        const now = Date.now();
+
+        let availableProxies = validProxies.filter(p => {
+            if (!p.isValid) return false;
+            if (manualRemovals.has(p.proxy)) return false;
+            const failureTimestamp = downedProxies.get(p.proxy);
+            if (!failureTimestamp) return true;
+            return (now - failureTimestamp) >= cooldownMs;
+        });
+        
+        const countryList = countryFilterList.split(',').map(c => c.trim().toUpperCase()).filter(c => c);
+        const ispList = ispFilterList.split(',').map(i => i.trim().toLowerCase()).filter(i => i);
+
+        if (filterMode === 'whitelist') {
+            if (countryList.length > 0 || ispList.length > 0) {
+                availableProxies = availableProxies.filter(p => {
+                    const countryMatch = countryList.length > 0 && p.country && countryList.includes(p.country.toUpperCase());
+                    const ispMatch = ispList.length > 0 && p.isp && ispList.some(isp => p.isp.toLowerCase().includes(isp));
+                    return countryMatch || ispMatch;
+                });
+            }
+        } else { // Blacklist mode
+            if (countryList.length > 0) {
+                availableProxies = availableProxies.filter(p => !p.country || !countryList.includes(p.country.toUpperCase()));
+            }
+            if (ispList.length > 0) {
+                availableProxies = availableProxies.filter(p => !p.isp || !ispList.some(isp => p.isp.toLowerCase().includes(isp)));
+            }
+        }
+        
         if (availableProxies.length === 0) {
-            if (downedProxies.size > 0 && validProxies.some(p => p.isValid)) {
-                notify("Proxy Rotation Reset", { body: "All proxies failed. Re-checking list from the top." });
-                setDownedProxies(new Set());
+            if ((downedProxies.size > 0 || manualRemovals.size > 0) && validProxies.some(p => p.isValid)) {
+                notify("Proxy Rotation Reset", { body: "All proxies failed or were removed. Resetting lists." });
+                setDownedProxies(new Map());
+                setManualRemovals(new Set());
                 availableProxies = validProxies.filter(p => p.isValid);
             } else {
                 return null;
             }
         }
         
-        let candidatePool: ValidProxy[] = [];
-        if (rotationStrategy === 'sequential' || rotationStrategy === 'aggressive') {
-            const lastProxyIndex = activeProxy ? validProxies.findIndex(p => p.proxy === activeProxy.proxy) : -1;
-            for(let i = 0; i < validProxies.length; i++) {
-                const idx = (lastProxyIndex + 1 + i) % validProxies.length;
-                if(validProxies[idx]?.isValid) candidatePool.push(validProxies[idx]);
-            }
-        } else {
-            candidatePool = [...validProxies].sort((a, b) => {
-                if (rotationStrategy === 'random') return Math.random() - 0.5;
-                if (rotationStrategy === 'health-based') return (b.healthScore ?? 0) - (a.healthScore ?? 0);
-                if (rotationStrategy === 'latency-based') return (a.latency ?? 9999) - (b.latency ?? 9999);
-                return 0;
-            });
-        }
+        let basePool = availableProxies;
+        let effectiveStrategy: RotationStrategy = rotationStrategy;
 
+        if (rotationStrategy === 'prioritize-pinned') {
+            const pinnedAndWorking = availableProxies.filter(p => p.isPinned);
+            if (pinnedAndWorking.length > 0) {
+                basePool = pinnedAndWorking;
+            }
+            effectiveStrategy = 'sequential';
+        }
+        
+        let rotationOrder: ValidProxy[] = [];
+
+        switch(effectiveStrategy) {
+            case 'random':
+                rotationOrder = [...basePool].sort(() => Math.random() - 0.5);
+                break;
+            case 'health-based':
+                rotationOrder = [...basePool].sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0));
+                break;
+            case 'latency-based':
+                rotationOrder = [...basePool].sort((a, b) => (a.latency ?? 9999) - (b.latency ?? 9999));
+                break;
+            case 'adaptive':
+                 rotationOrder = [...basePool].sort((a, b) => {
+                    const calculateScore = (p: ValidProxy) => {
+                        const stats = sessionStats[p.proxy] || { success: 1, fail: 0 };
+                        // Bayesian average to give new proxies a fair chance
+                        const sessionScore = (stats.success + 1) / (stats.success + stats.fail + 2);
+                        const initialHealth = (p.healthScore ?? 50) / 100;
+                        const latency = p.latency ?? MAX_REASONABLE_LATENCY;
+                        // Normalize latency so lower is better (closer to 1.0)
+                        const latencyScore = 1 - (Math.min(latency, MAX_REASONABLE_LATENCY) / MAX_REASONABLE_LATENCY);
+                        
+                        // Weighted average: 50% session success, 30% latency, 20% initial health
+                        return (sessionScore * 0.5) + (latencyScore * 0.3) + (initialHealth * 0.2);
+                    };
+                    return calculateScore(b) - calculateScore(a);
+                });
+                break;
+            case 'sequential':
+            case 'aggressive':
+            default:
+                rotationOrder = [...basePool];
+                break;
+        }
+        
+        const candidatePool: ValidProxy[] = [];
+        const lastProxyIndex = activeProxy ? rotationOrder.findIndex(p => p.proxy === activeProxy.proxy) : -1;
+        for(let i = 0; i < rotationOrder.length; i++) {
+            const idx = (lastProxyIndex + 1 + i) % rotationOrder.length;
+            candidatePool.push(rotationOrder[idx]);
+        }
+        
         for (const candidate of candidatePool) {
-            if (!candidate?.isValid || downedProxies.has(candidate.proxy)) continue;
             if (candidate.proxy === activeProxy?.proxy && availableProxies.length > 1) continue;
 
             let result: TestResult;
@@ -281,22 +383,52 @@ const Index = () => {
             setConnectionLog(prevLog => [{ ...result, proxy: candidate.proxy, timestamp: new Date().toLocaleTimeString() }, ...prevLog].slice(0, 50));
             
             if (result.success) {
-                return candidate;
+                 if (downedProxies.has(candidate.proxy)) {
+                    setDownedProxies(prev => {
+                        const newMap = new Map(prev);
+                        newMap.delete(candidate.proxy);
+                        return newMap;
+                    });
+                }
+                return { proxy: candidate, newLatency: result.latency as number };
             } else {
                 notify("Proxy Failed Pre-Test", { body: `${candidate.proxy} is unresponsive.` });
-                setDownedProxies(prev => new Set(prev).add(candidate.proxy));
+                setDownedProxies(prev => new Map(prev).set(candidate.proxy, Date.now()));
             }
         }
         return null;
     };
 
-    const nextProxy = await findNextWorkingProxy();
+    const findProxyResult = await findNextWorkingProxy();
 
-    if (nextProxy) {
+    if (findProxyResult) {
+        const { proxy: nextProxy, newLatency } = findProxyResult;
+
+        setValidProxies(currentProxies => {
+            const proxyIndex = currentProxies.findIndex(p => p.proxy === nextProxy.proxy);
+            if (proxyIndex === -1) return currentProxies;
+
+            const newProxies = [...currentProxies];
+            newProxies[proxyIndex] = { ...newProxies[proxyIndex], latency: newLatency };
+            return newProxies;
+        });
+        
         const globalIndex = validProxies.findIndex(p => p.proxy === nextProxy.proxy);
         setCurrentProxyIndex(globalIndex);
         setActiveProxy(nextProxy);
-        if (!isInitialStart) { setSwitchCount(c => c + 1); }
+
+        if (!isInitialStart) {
+            const newSwitchCount = switchCount + 1;
+            setSwitchCount(newSwitchCount);
+
+            if (initialValidCount > 0 && newSwitchCount % initialValidCount === 0) {
+                if (manualRemovals.size > 0) {
+                    setManualRemovals(new Set());
+                    toast({ title: "Manual Removals Reset", description: "Proxies you removed are now back in the rotation." });
+                }
+            }
+        }
+
         setRemainingTime(switchInterval);
         setSuccessfulRequests(0);
         if (!isInitialStart) {
@@ -308,7 +440,7 @@ const Index = () => {
     }
 
     isSwitchingRef.current = false;
-  }, [validProxies, downedProxies, activeProxy, switchInterval, rotationStrategy, notify]);
+  }, [validProxies, downedProxies, manualRemovals, activeProxy, switchInterval, rotationStrategy, notify, switchCount, loopCount, initialValidCount, cooldownMinutes, filterMode, countryFilterList, ispFilterList, handleStopSwitcher, toast, sessionStats]);
 
   
   // --- CORE TIMING & REQUEST LOGIC ---
@@ -337,12 +469,26 @@ const Index = () => {
   }, [successfulRequests, switchRequestCount, switcherStatus, switchMode, rotationStrategy, switchProxy]);
 
   const handleRequestSuccess = () => {
+      if (activeProxy) {
+        setSessionStats(prev => {
+            const stats = prev[activeProxy.proxy] ?? { success: 0, fail: 0 };
+            return { ...prev, [activeProxy.proxy]: { ...stats, success: stats.success + 1 } };
+        });
+      }
+
       if (switcherStatus === 'running' && switchMode === 'requests' && rotationStrategy !== 'aggressive') {
           setSuccessfulRequests(prev => prev + 1);
       }
   };
 
   const handleRequestFailure = () => {
+      if (activeProxy) {
+        setSessionStats(prev => {
+            const stats = prev[activeProxy.proxy] ?? { success: 0, fail: 0 };
+            return { ...prev, [activeProxy.proxy]: { ...stats, fail: stats.fail + 1 } };
+        });
+      }
+
       if (switcherStatus === 'running' && rotationStrategy === 'aggressive') {
         toast({ title: "Request Failed", description: "Aggressive mode: switching proxy.", variant: "destructive" });
         switchProxy();
@@ -350,12 +496,38 @@ const Index = () => {
   };
 
 
-  const handleStartSwitcher = () => {
-    if (validProxies.filter(p => p.isValid).length === 0) {
+  const handleStartSwitcher = async () => {
+    let proxiesToUse = validProxies.filter(p => p.isValid);
+    if (proxiesToUse.length === 0) {
       toast({ title: "No valid proxies", description: "Please check some proxies first.", variant: "destructive" });
       return;
     }
-    setDownedProxies(new Set());
+
+    const newDownedProxies = new Map<string, number>();
+    if (retestOnStart) {
+        toast({ title: "Pre-testing all proxies..." });
+        for (const proxy of proxiesToUse) {
+            try {
+                const response = await fetch('/api/test-connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxy: proxy.proxy }) });
+                const result = await response.json();
+                if (!result.success) {
+                    newDownedProxies.set(proxy.proxy, Date.now());
+                }
+            } catch (error) {
+                newDownedProxies.set(proxy.proxy, Date.now());
+            }
+        }
+        const onlineCount = proxiesToUse.length - newDownedProxies.size;
+        if (onlineCount === 0) {
+             toast({ title: "No proxies passed the pre-test", description: "All valid proxies failed the initial check. Please check your proxies or network.", variant: "destructive" });
+             return;
+        }
+         toast({ title: "Pre-test complete", description: `${onlineCount} of ${proxiesToUse.length} proxies are online.` });
+    }
+
+    setDownedProxies(newDownedProxies);
+    setManualRemovals(new Set());
+    setInitialValidCount(proxiesToUse.length);
     setConnectionLog([]);
     setSwitchCount(0);
     setSuccessfulRequests(0);
@@ -367,21 +539,13 @@ const Index = () => {
   
   const handlePauseSwitcher = () => setSwitcherStatus('paused');
   const handleResumeSwitcher = () => setSwitcherStatus('running');
-  const handleStopSwitcher = () => {
-    setSwitcherStatus('stopped');
-    setRemainingTime(0);
-    setSuccessfulRequests(0);
-    setActiveProxy(null);
-    notify("Proxy Switcher Stopped");
-    toast({ title: "Proxy switcher stopped" });
-  };
 
   const handleManualSwitch = () => {
     if (switcherStatus !== 'running' || isSwitchingRef.current) return;
     switchProxy();
   };
 
-  const handleSendProxyToTop = (proxyToMoveString: string) => {
+  const handleSendToTop = (proxyToMoveString: string) => {
     setValidProxies(currentProxies => {
       const proxyToMove = currentProxies.find(p => p.proxy === proxyToMoveString);
       if (!proxyToMove) return currentProxies;
@@ -409,6 +573,65 @@ const Index = () => {
     }
     setTestResult(result);
     setConnectionLog(prevLog => [{ ...result, proxy, timestamp: new Date().toLocaleTimeString() }, ...prevLog].slice(0, 20));
+  };
+
+  const handleReTestProxy = async (proxyToTest: string) => {
+    toast({ title: "Testing...", description: `Sending a test request to ${proxyToTest}` });
+    
+    const proxyIndex = validProxies.findIndex(p => p.proxy === proxyToTest);
+    if (proxyIndex === -1) return;
+
+    try {
+        const response = await fetch('/api/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proxy: proxyToTest }),
+        });
+        const result = await response.json();
+
+        const updatedProxies = [...validProxies];
+        if (result.success) {
+            updatedProxies[proxyIndex].latency = result.latency;
+            if (downedProxies.has(proxyToTest)) {
+                const newDowned = new Map(downedProxies);
+                newDowned.delete(proxyToTest);
+                setDownedProxies(newDowned);
+            }
+             if (manualRemovals.has(proxyToTest)) {
+                const newManual = new Set(manualRemovals);
+                newManual.delete(proxyToTest);
+                setManualRemovals(newManual);
+            }
+            toast({ title: "Test Successful!", description: `${proxyToTest} is online with a latency of ${result.latency}ms.` });
+        } else {
+            setDownedProxies(prev => new Map(prev).set(proxyToTest, Date.now()));
+            toast({ title: "Test Failed", description: `${proxyToTest} appears to be offline.`, variant: "destructive" });
+        }
+        setValidProxies(updatedProxies);
+        
+    } catch (error) {
+        toast({ title: "Error", description: "Failed to connect to the backend.", variant: "destructive" });
+    }
+  };
+  
+  const handleTempRemove = (proxyToRemove: string) => {
+    setManualRemovals(prev => new Set(prev).add(proxyToRemove));
+    toast({
+        title: "Proxy Removed for One Cycle",
+        description: `${proxyToRemove} will be skipped for one full rotation.`,
+    });
+  };
+
+  const handleReenableProxy = (proxyToReenable: string) => {
+    if (manualRemovals.has(proxyToReenable)) {
+        const newManualRemovals = new Set(manualRemovals);
+        newManualRemovals.delete(proxyToReenable);
+        setManualRemovals(newManualRemovals);
+        toast({
+            title: "Proxy Re-enabled",
+            description: `${proxyToReenable} is now back in the rotation.`,
+        });
+    }
   };
 
 
@@ -451,7 +674,7 @@ const Index = () => {
         handleRequestSuccess();
       } catch (error: any) {
         toast({ title: "Submission Error", description: error.message, variant: "destructive" });
-        handleRequestFailure(); // Report the failure
+        handleRequestFailure();
       }
       setProcessedCount(i + 1);
       setAutoFillProgress(((i + 1) / emails.length) * 100);
@@ -615,10 +838,11 @@ const Index = () => {
           </Card>
         )}
         <Tabs defaultValue="checker" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 bg-slate-800/50 border border-slate-700">
+          <TabsList className="grid w-full grid-cols-5 bg-slate-800/50 border border-slate-700">
             <TabsTrigger value="checker" className="flex items-center space-x-2 data-[state=active]:bg-blue-600"><Shield className="w-4 h-4" /><span>Proxy Checker</span></TabsTrigger>
             <TabsTrigger value="switcher" className="flex items-center space-x-2 data-[state=active]:bg-purple-600"><RotateCcw className="w-4 h-4" /><span>Proxy Switcher</span></TabsTrigger>
             <TabsTrigger value="autofill" className="flex items-center space-x-2 data-[state=active]:bg-green-600"><FormInput className="w-4 h-4" /><span>Auto Fill</span></TabsTrigger>
+            <TabsTrigger value="ip-tester" className="flex items-center space-x-2 data-[state=active]:bg-lime-600"><TestTube2 className="w-4 h-4" /><span>IP Tester</span></TabsTrigger>
             <TabsTrigger value="analytics" className="flex items-center space-x-2 data-[state=active]:bg-orange-600"><PieChart className="w-4 h-4" /><span>Analytics</span></TabsTrigger>
           </TabsList>
           
@@ -626,11 +850,57 @@ const Index = () => {
             <ProxyChecker onProxiesValidated={handleProxiesValidated} proxyInput={proxyInput} onProxyInputChange={setProxyInput} results={checkerResults} isChecking={isChecking} progress={progress} onCheckProxies={handleCheckProxies} onAbort={handleAbort} onClearResults={handleClearResults} onRemoveResults={handleRemoveResults} onRecheckProxies={handleRecheckProxies} onSetPinned={handleSetPinned}/>
           </TabsContent>
           <TabsContent value="switcher" className="space-y-6">
-            <ProxySwitcher validProxies={validProxies} onTestConnection={handleTestConnection} testResult={testResult} connectionLog={connectionLog} sessionStats={sessionStats} switcherStatus={switcherStatus} switchInterval={switchInterval} setSwitchInterval={setSwitchInterval} remainingTime={remainingTime} switchCount={switchCount} onStart={handleStartSwitcher} onStop={handleStopSwitcher} onPause={handlePauseSwitcher} onResume={handleResumeSwitcher} onManualSwitch={handleManualSwitch} onSendToTop={handleSendProxyToTop} currentProxyIndex={currentProxyIndex} downedProxies={downedProxies} switchMode={switchMode} setSwitchMode={setSwitchMode} successfulRequests={successfulRequests} switchRequestCount={switchRequestCount} setSwitchRequestCount={setSwitchRequestCount} rotationStrategy={rotationStrategy} setRotationStrategy={setRotationStrategy} />
+            <ProxySwitcher 
+                validProxies={validProxies} 
+                onTestConnection={handleTestConnection} 
+                onReTestProxy={handleReTestProxy}
+                onTempRemove={handleTempRemove}
+                onReenableProxy={handleReenableProxy}
+                testResult={testResult} 
+                connectionLog={connectionLog} 
+                sessionStats={sessionStats} 
+                switcherStatus={switcherStatus} 
+                switchInterval={switchInterval} 
+                setSwitchInterval={setSwitchInterval} 
+                remainingTime={remainingTime} 
+                switchCount={switchCount} 
+                onStart={handleStartSwitcher} 
+                onStop={handleStopSwitcher} 
+                onPause={handlePauseSwitcher} 
+                onResume={handleResumeSwitcher} 
+                onManualSwitch={handleManualSwitch} 
+                onSendToTop={handleSendToTop} 
+                onResetDowned={handleResetDowned}
+                currentProxyIndex={currentProxyIndex} 
+                downedProxies={downedProxies}
+                manualRemovals={manualRemovals}
+                switchMode={switchMode} 
+                setSwitchMode={setSwitchMode} 
+                successfulRequests={successfulRequests} 
+                switchRequestCount={switchRequestCount} 
+                setSwitchRequestCount={setSwitchRequestCount} 
+                loopCount={loopCount} 
+                setLoopCount={setLoopCount} 
+                cooldownMinutes={cooldownMinutes} 
+                setCooldownMinutes={setCooldownMinutes} 
+                retestOnStart={retestOnStart} 
+                setRetestOnStart={setRetestOnStart} 
+                filterMode={filterMode} 
+                setFilterMode={setFilterMode} 
+                countryFilterList={countryFilterList} 
+                setCountryFilterList={setCountryFilterList} 
+                ispFilterList={ispFilterList} 
+                setIspFilterList={setIspFilterList} 
+                rotationStrategy={rotationStrategy} 
+                setRotationStrategy={setRotationStrategy} 
+            />
           </TabsContent>
           <TabsContent value="autofill" className="space-y-6">
             <AutoFillForm activeProxy={activeProxy} onStartAutoFill={handleStartAutoFill} onStopAutoFill={handleStopAutoFill} onRequestSuccess={handleRequestSuccess} onRequestFailure={handleRequestFailure} isRunning={isAutoFillRunning} progress={autoFillProgress} processedCount={processedCount} currentEmail={currentEmail} />
           </TabsContent>
+          <TabsContent value="ip-tester" className="space-y-6">
+            <IpTester activeProxy={activeProxy} />
+           </TabsContent>
            <TabsContent value="analytics" className="space-y-6">
             <AnalyticsDashboard validProxies={validProxies} sessionStats={sessionStats} connectionLog={connectionLog} />
           </TabsContent>
