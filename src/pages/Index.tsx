@@ -6,17 +6,15 @@ import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { IpTester } from "@/components/IpTester";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, RotateCcw, FormInput, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2, Wifi, WifiOff, Zap } from "lucide-react";
+import { Shield, RotateCcw, FormInput, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 
 type SwitchMode = 'time' | 'requests';
 type FilterMode = 'whitelist' | 'blacklist';
-type AutoFillSyncMode = 'fast' | 'safe';
 
 // --- DATA STRUCTURES ---
 export interface ValidProxy {
@@ -81,6 +79,7 @@ const Index = () => {
 
   // Switcher State
   const [switcherStatus, setSwitcherStatus] = useState<'stopped' | 'running' | 'paused'>('stopped');
+  const [currentProxyIndex, setCurrentProxyIndex] = useState(0);
   const [switchInterval, setSwitchInterval] = useState(30);
   const [remainingTime, setRemainingTime] = useState(0);
   const [switchCount, setSwitchCount] = useState(0);
@@ -105,6 +104,7 @@ const Index = () => {
   const [processedCount, setProcessedCount] = useState(0);
   const [currentEmail, setCurrentEmail] = useState("");
   const [autoFillMode, setAutoFillMode] = useState<'direct' | 'switcher'>('switcher');
+  
   const [emailData, setEmailData] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [delay, setDelay] = useState(2);
@@ -114,7 +114,6 @@ const Index = () => {
     nameSelector: 'input[name="name"], input[name="first_name"], #name',
     phoneSelector: 'input[name="phone"], input[type="tel"], #phone'
   });
-  const [autoFillSyncMode, setAutoFillSyncMode] = useState<AutoFillSyncMode>('safe');
 
 
   // Profile State
@@ -130,9 +129,12 @@ const Index = () => {
   const isSwitchingRef = useRef(false);
   const isAutoFillRunningRef = useRef(isAutoFillRunning);
   const importFileInputRef = useRef<HTMLInputElement>(null);
+  // *** FIX 1: Create a ref to hold the current active proxy ***
   const activeProxyRef = useRef<ValidProxy | null>(null);
 
   useEffect(() => { isAutoFillRunningRef.current = isAutoFillRunning }, [isAutoFillRunning]);
+  
+  // *** FIX 2: Keep the ref synchronized with the state ***
   useEffect(() => {
     activeProxyRef.current = activeProxy;
   }, [activeProxy]);
@@ -359,10 +361,14 @@ const Index = () => {
                  rotationOrder = [...basePool].sort((a, b) => {
                     const calculateScore = (p: ValidProxy) => {
                         const stats = sessionStats[p.proxy] || { success: 1, fail: 0 };
+                        // Bayesian average to give new proxies a fair chance
                         const sessionScore = (stats.success + 1) / (stats.success + stats.fail + 2);
                         const initialHealth = (p.healthScore ?? 50) / 100;
                         const latency = p.latency ?? MAX_REASONABLE_LATENCY;
+                        // Normalize latency so lower is better (closer to 1.0)
                         const latencyScore = 1 - (Math.min(latency, MAX_REASONABLE_LATENCY) / MAX_REASONABLE_LATENCY);
+                        
+                        // Weighted average: 50% session success, 30% latency, 20% initial health
                         return (sessionScore * 0.5) + (latencyScore * 0.3) + (initialHealth * 0.2);
                     };
                     return calculateScore(b) - calculateScore(a);
@@ -376,13 +382,15 @@ const Index = () => {
         }
         
         const candidatePool: ValidProxy[] = [];
-        const lastProxyIndex = activeProxyRef.current ? rotationOrder.findIndex(p => p.proxy === activeProxyRef.current!.proxy) : -1;
+        const lastProxyIndex = activeProxy ? rotationOrder.findIndex(p => p.proxy === activeProxy.proxy) : -1;
         for(let i = 0; i < rotationOrder.length; i++) {
             const idx = (lastProxyIndex + 1 + i) % rotationOrder.length;
             candidatePool.push(rotationOrder[idx]);
         }
         
         for (const candidate of candidatePool) {
+            if (candidate.proxy === activeProxy?.proxy && availableProxies.length > 1) continue;
+
             let result: TestResult;
             try {
                 const response = await fetch('/api/test-connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxy: candidate.proxy }) });
@@ -414,23 +422,21 @@ const Index = () => {
     const findProxyResult = await findNextWorkingProxy();
 
     if (findProxyResult) {
-        const { proxy: nextProxyObject, newLatency } = findProxyResult;
+        const { proxy: nextProxy, newLatency } = findProxyResult;
 
-        let updatedProxy: ValidProxy;
         setValidProxies(currentProxies => {
-            const newProxies = [...currentProxies];
-            const proxyIndex = newProxies.findIndex(p => p.proxy === nextProxyObject.proxy);
-            if (proxyIndex === -1) return currentProxies; // Should not happen
+            const proxyIndex = currentProxies.findIndex(p => p.proxy === nextProxy.proxy);
+            if (proxyIndex === -1) return currentProxies;
 
-            // Create the updated proxy object
-            updatedProxy = { ...newProxies[proxyIndex], latency: newLatency, lastChecked: Date.now() };
-            newProxies[proxyIndex] = updatedProxy;
-            
-            // **FIX 1**: Set the active proxy state with the NEW updated object
-            setActiveProxy(updatedProxy);
+            const newProxies = [...currentProxies];
+            newProxies[proxyIndex] = { ...newProxies[proxyIndex], latency: newLatency, lastChecked: Date.now() };
             return newProxies;
         });
         
+        const globalIndex = validProxies.findIndex(p => p.proxy === nextProxy.proxy);
+        setCurrentProxyIndex(globalIndex);
+        setActiveProxy(nextProxy);
+
         if (!isInitialStart) {
             const newSwitchCount = switchCount + 1;
             setSwitchCount(newSwitchCount);
@@ -446,7 +452,7 @@ const Index = () => {
         setRemainingTime(switchInterval);
         setSuccessfulRequests(0);
         if (!isInitialStart) {
-            notify("Proxy Switched", { body: nextProxyObject.proxy });
+            notify("Proxy Switched", { body: `Now using: ${nextProxy.proxy}` });
         }
     } else {
         notify("No Working Proxies", { body: "Could not find a working proxy. Stopping switcher." });
@@ -454,7 +460,7 @@ const Index = () => {
     }
 
     isSwitchingRef.current = false;
-  }, [validProxies, downedProxies, manualRemovals, rotationStrategy, notify, switchCount, loopCount, initialValidCount, cooldownMinutes, filterMode, countryFilterList, ispFilterList, handleStopSwitcher, toast, sessionStats]);
+  }, [validProxies, downedProxies, manualRemovals, activeProxy, switchInterval, rotationStrategy, notify, switchCount, loopCount, initialValidCount, cooldownMinutes, filterMode, countryFilterList, ispFilterList, handleStopSwitcher, toast, sessionStats]);
 
   
   // --- CORE TIMING & REQUEST LOGIC ---
@@ -567,7 +573,7 @@ const Index = () => {
       const newOrder = [proxyToMove, ...otherProxies];
       if (activeProxy) {
         const newIndexOfActiveProxy = newOrder.findIndex(p => p.proxy === activeProxy.proxy);
-        // This logic might need adjustment if currentProxyIndex state is removed
+        if (newIndexOfActiveProxy !== -1) setCurrentProxyIndex(newIndexOfActiveProxy);
       }
       toast({ title: "Queue Updated", description: `${proxyToMove.proxy} is now at the top.` });
       return newOrder;
@@ -590,6 +596,9 @@ const Index = () => {
   };
 
   const handleReTestProxy = useCallback(async (proxyToTest: string) => {
+    const proxyIndex = validProxies.findIndex(p => p.proxy === proxyToTest);
+    if (proxyIndex === -1) return;
+
     try {
         const response = await fetch('/api/test-connection', {
             method: 'POST',
@@ -626,7 +635,7 @@ const Index = () => {
     } catch (error) {
         toast({ title: "Error during re-test", description: `Failed to connect to backend for ${proxyToTest}`, variant: "destructive" });
     }
-  }, [downedProxies, manualRemovals, toast]);
+  }, [validProxies, downedProxies, manualRemovals, toast]);
   
   const handleTempRemove = (proxyToRemove: string) => {
     setManualRemovals(prev => new Set(prev).add(proxyToRemove));
@@ -680,13 +689,7 @@ const Index = () => {
         break;
       }
       
-      if (autoFillMode === 'switcher' && autoFillSyncMode === 'safe') {
-        while (isSwitchingRef.current) {
-          console.log("Safe Mode: Switcher is busy, waiting a moment...");
-          await sleep(250);
-        }
-      }
-      
+      // *** FIX 3: Read the proxy from the ref inside the loop ***
       const currentProxyForRequest = autoFillMode === 'switcher' ? activeProxyRef.current?.proxy : null;
 
       if (autoFillMode === 'switcher' && !currentProxyForRequest) {
@@ -843,8 +846,6 @@ const Index = () => {
     return () => clearInterval(intervalId);
   }, [validProxies, switcherStatus, handleReTestProxy]);
 
-  const isRunningOrPaused = switcherStatus === 'running' || switcherStatus === 'paused';
-
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
@@ -856,57 +857,50 @@ const Index = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <Card className="bg-slate-800/50 border-slate-700">
-                <CardHeader><CardTitle className="text-white">Profile Management & Settings</CardTitle></CardHeader>
-                <CardContent className="flex flex-wrap items-center gap-4">
+                <CardHeader><CardTitle className="text-white">Profile Management</CardTitle></CardHeader>
+                <CardContent className="flex items-center space-x-2">
                     <DropdownMenu>
-                        <DropdownMenuTrigger asChild><Button variant="outline" className="bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><FolderOpen className="w-4 h-4 mr-2"/>{selectedProfile || "Load Profile"}</Button></DropdownMenuTrigger>
+                        <DropdownMenuTrigger asChild><Button variant="outline" className="flex-1 bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><FolderOpen className="w-4 h-4 mr-2"/>{selectedProfile || "Load Profile"}</Button></DropdownMenuTrigger>
                         <DropdownMenuContent className="bg-slate-800 border-slate-700 text-white">
                             <DropdownMenuLabel>Select a profile</DropdownMenuLabel><DropdownMenuSeparator />
                             {Object.keys(profiles).length > 0 ? Object.keys(profiles).map(name => (<DropdownMenuItem key={name} onSelect={() => handleLoadProfile(name)} className="flex justify-between items-center">{name}<Button variant="ghost" size="icon" className="h-6 w-6 text-red-500 hover:bg-red-900/50" onClick={(e) => {e.stopPropagation(); handleDeleteProfile(name);}}><Trash2 className="w-4 h-4" /></Button></DropdownMenuItem>)) : <DropdownMenuItem disabled>No profiles saved</DropdownMenuItem>}
                         </DropdownMenuContent>
                     </DropdownMenu>
                     <Button onClick={handleSaveProfile} className="bg-blue-600 hover:bg-blue-700"><Save className="w-4 h-4 mr-2"/>Save</Button>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-2 border-l pl-2 ml-2">
                         <Button onClick={() => importFileInputRef.current?.click()} variant="outline" size="icon" className="bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700"><Upload className="w-4 h-4" /></Button>
                         <input type="file" ref={importFileInputRef} onChange={handleImportProfiles} accept=".json" className="hidden"/>
                         <Button onClick={handleExportProfiles} variant="outline" size="icon" className="bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700"><Download className="w-4 h-4" /></Button>
                     </div>
-                    <div className="flex items-center space-x-2 border-l border-slate-600 pl-4">
+                </CardContent>
+            </Card>
+             <Card className="bg-slate-800/50 border-slate-700">
+                <CardHeader><CardTitle className="text-white">Settings</CardTitle></CardHeader>
+                <CardContent className="flex items-center space-x-2 justify-center pt-6">
+                   <div className="flex items-center space-x-2">
                         <Bell className="text-white"/>
-                        <Label htmlFor="notifications-switch" className="text-white text-sm">Notifications</Label>
+                        <Label htmlFor="notifications-switch" className="text-white">Desktop Notifications</Label>
                         <Switch id="notifications-switch" checked={notificationsEnabled} onCheckedChange={handleNotificationToggle} />
                     </div>
                 </CardContent>
             </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-                <CardHeader>
-                    <CardTitle className="flex items-center space-x-2 text-white">
-                        {activeProxy && isRunningOrPaused ? <Wifi className="w-5 h-5 text-green-400 animate-pulse" /> : <WifiOff className="w-5 h-5 text-gray-400" />}
-                        <span>Current Proxy</span>
-                    </CardTitle>
-                    <CardDescription className="text-gray-400">The proxy currently being used by the application.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {activeProxy && isRunningOrPaused ? (
-                    <div className="space-y-3">
-                        <div className="p-3 bg-slate-900/30 border border-slate-700 rounded-lg">
-                        <div className="font-mono text-green-400 text-lg mb-2">{activeProxy.proxy}</div>
-                        <div className="flex items-center space-x-2">
-                            <Badge variant="secondary">{activeProxy.portType}</Badge>
-                            <span className="text-sm text-gray-400">{activeProxy.latency}ms</span>
-                            <span className="text-sm text-blue-400">{activeProxy.location}</span>
-                        </div>
-                        </div>
-                        <Button onClick={() => handleTestConnection(activeProxy.proxy)} className="w-full bg-sky-600 hover:bg-sky-700"><Zap className="w-4 h-4 mr-2" />Manual Test</Button>
-                        <div className="text-sm text-gray-400 mt-2">Total Switches This Session: {switchCount}</div>
-                    </div>
-                    ) : (
-                    <div className="text-center py-6 text-gray-500"><p>No active proxy</p><p className="text-xs mt-1">Start the switcher to activate a proxy.</p></div>
-                    )}
-                </CardContent>
-            </Card>
         </div>
 
+        {activeProxy && (
+          <Card className="mb-6 bg-green-900/20 border-green-500/30">
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-green-400 font-medium">Active Proxy:</span>
+                  <span className="text-white">{activeProxy.proxy}</span>
+                  <span className="text-blue-400">({activeProxy.portType})</span>
+                </div>
+                <div className="text-sm text-gray-400">Valid Proxies: {validProxies.filter(p=>p.isValid).length}</div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
         <Tabs defaultValue="checker" className="space-y-6">
           <TabsList className="grid w-full grid-cols-5 bg-slate-800/50 border border-slate-700">
             <TabsTrigger value="checker" className="flex items-center space-x-2 data-[state=active]:bg-blue-600"><Shield className="w-4 h-4" /><span>Proxy Checker</span></TabsTrigger>
@@ -922,7 +916,10 @@ const Index = () => {
           <TabsContent value="switcher" className="space-y-6">
             <ProxySwitcher 
                 validProxies={validProxies} 
-                activeProxy={activeProxy}
+                onTestConnection={handleTestConnection} 
+                onReTestProxy={handleReTestProxy}
+                onTempRemove={handleTempRemove}
+                onReenableProxy={handleReenableProxy}
                 testResult={testResult} 
                 connectionLog={connectionLog} 
                 sessionStats={sessionStats} 
@@ -930,6 +927,7 @@ const Index = () => {
                 switchInterval={switchInterval} 
                 setSwitchInterval={setSwitchInterval} 
                 remainingTime={remainingTime} 
+                switchCount={switchCount} 
                 onStart={handleStartSwitcher} 
                 onStop={handleStopSwitcher} 
                 onPause={handlePauseSwitcher} 
@@ -937,10 +935,14 @@ const Index = () => {
                 onManualSwitch={handleManualSwitch} 
                 onSendToTop={handleSendToTop} 
                 onResetDowned={handleResetDowned}
+                currentProxyIndex={currentProxyIndex} 
                 downedProxies={downedProxies}
                 manualRemovals={manualRemovals}
                 switchMode={switchMode} 
-                setSwitchMode={setSwitchMode}
+                setSwitchMode={setSwitchMode} 
+                successfulRequests={successfulRequests} 
+                switchRequestCount={switchRequestCount} 
+                setSwitchRequestCount={setSwitchRequestCount} 
                 loopCount={loopCount} 
                 setLoopCount={setLoopCount} 
                 cooldownMinutes={cooldownMinutes} 
@@ -954,12 +956,7 @@ const Index = () => {
                 ispFilterList={ispFilterList} 
                 setIspFilterList={setIspFilterList} 
                 rotationStrategy={rotationStrategy} 
-                setRotationStrategy={setRotationStrategy}
-                autoFillSyncMode={autoFillSyncMode}
-                setAutoFillSyncMode={setAutoFillSyncMode}
-                onReTestProxy={handleReTestProxy}
-                onTempRemove={handleTempRemove}
-                onReenableProxy={handleReenableProxy}
+                setRotationStrategy={setRotationStrategy} 
             />
           </TabsContent>
           <TabsContent value="autofill" className="space-y-6">

@@ -1,4 +1,4 @@
-import { useState, useEffect, Dispatch, SetStateAction } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -13,12 +13,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { CooldownTimer } from "@/components/CooldownTimer";
-import { Play, Pause, RotateCcw, Timer, ListChecks, Power, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown, Filter, RefreshCw, Loader, Ban, PauseCircle, Undo2, Rabbit, Turtle, CheckCircle, XCircle, ArrowUp, Zap } from "lucide-react";
+import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown, Filter, RefreshCw, Loader, Ban, PauseCircle, Undo2 } from "lucide-react";
 import { ValidProxy, TestResult, ConnectionLogEntry } from "@/pages/Index";
 
 type SwitchMode = 'time' | 'requests';
 type FilterMode = 'whitelist' | 'blacklist';
-type AutoFillSyncMode = 'fast' | 'safe';
+// Add "adaptive" to the list of strategies
 export type RotationStrategy = 'sequential' | 'random' | 'health-based' | 'latency-based' | 'aggressive' | 'prioritize-pinned' | 'adaptive';
 
 export interface SessionStat {
@@ -28,7 +28,10 @@ export interface SessionStat {
 
 interface ProxySwitcherProps {
   validProxies: ValidProxy[];
-  activeProxy: ValidProxy | null; // **MODIFIED** Added this prop to know which proxy to highlight
+  onTestConnection: (proxy: string) => void;
+  onReTestProxy: (proxy: string) => Promise<void>;
+  onTempRemove: (proxy: string) => void;
+  onReenableProxy: (proxy: string) => void;
   testResult: TestResult | null;
   connectionLog: ConnectionLogEntry[];
   sessionStats: Record<string, SessionStat>;
@@ -36,17 +39,10 @@ interface ProxySwitcherProps {
   switchInterval: number;
   setSwitchInterval: (interval: number) => void;
   remainingTime: number;
-  onStart: () => void;
-  onStop: () => void;
-  onPause: () => void;
-  onResume: () => void;
-  onManualSwitch: () => void;
-  onSendToTop: (proxy: string) => void;
-  onResetDowned: () => void;
-  downedProxies: Map<string, number>;
-  manualRemovals: Set<string>;
-  switchMode: SwitchMode;
-  setSwitchMode: (mode: SwitchMode) => void;
+  switchCount: number;
+  successfulRequests: number;
+  switchRequestCount: number;
+  setSwitchRequestCount: (count: number) => void;
   loopCount: number;
   setLoopCount: (count: number) => void;
   cooldownMinutes: number;
@@ -59,25 +55,39 @@ interface ProxySwitcherProps {
   setCountryFilterList: (list: string) => void;
   ispFilterList: string;
   setIspFilterList: (list: string) => void;
+  switchMode: SwitchMode;
+  setSwitchMode: (mode: SwitchMode) => void;
   rotationStrategy: RotationStrategy; 
-  setRotationStrategy: (strategy: RotationStrategy) => void;
-  autoFillSyncMode: AutoFillSyncMode;
-  setAutoFillSyncMode: Dispatch<SetStateAction<AutoFillSyncMode>>;
-  onReTestProxy: (proxy: string) => Promise<void>;
-  onTempRemove: (proxy: string) => void;
-  onReenableProxy: (proxy: string) => void;
+  setRotationStrategy: (strategy: RotationStrategy) => void; 
+  onStart: () => void;
+  onStop: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onManualSwitch: () => void;
+  onSendToTop: (proxy: string) => void;
+  onResetDowned: () => void;
+  currentProxyIndex: number;
+  downedProxies: Map<string, number>;
+  manualRemovals: Set<string>;
 }
 
 export const ProxySwitcher = (props: ProxySwitcherProps) => {
   const {
     validProxies,
-    activeProxy, // **MODIFIED** Destructure the new prop
+    onTestConnection,
+    onReTestProxy,
+    onTempRemove,
+    onReenableProxy,
     connectionLog,
     sessionStats,
     switcherStatus,
     switchInterval,
     setSwitchInterval,
     remainingTime,
+    switchCount,
+    successfulRequests,
+    switchRequestCount,
+    setSwitchRequestCount,
     loopCount,
     setLoopCount,
     cooldownMinutes,
@@ -101,13 +111,9 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     onManualSwitch,
     onSendToTop,
     onResetDowned,
+    currentProxyIndex,
     downedProxies,
-    manualRemovals,
-    autoFillSyncMode,
-    setAutoFillSyncMode,
-    onReTestProxy,
-    onTempRemove,
-    onReenableProxy,
+    manualRemovals
   } = props;
 
   const [visibleProxyCount, setVisibleProxyCount] = useState(5);
@@ -130,7 +136,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
   
   const handleReTestClick = async (proxy: string) => {
     setTestingProxy(proxy);
-    await onReTestProxy(proxy); 
+    await onReTestProxy(proxy);
     setTestingProxy(null);
   }
 
@@ -143,7 +149,9 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
   });
 
   const timeProgress = remainingTime > 0 && switchInterval > 0 ? ((switchInterval - remainingTime) / switchInterval) * 100 : 0;
+  const requestProgress = successfulRequests > 0 && switchRequestCount > 0 ? (successfulRequests / switchRequestCount) * 100 : 0;
   
+  const currentProxy = validProxies[currentProxyIndex];
   const isRunningOrPaused = switcherStatus === 'running' || switcherStatus === 'paused';
 
   const getHealthIndicatorClass = (healthScore?: number) => {
@@ -160,7 +168,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     'latency-based': 'Latency-Based',
     aggressive: 'Aggressive (Switch on Fail)',
     'prioritize-pinned': 'Prioritize Pinned',
-    adaptive: 'Adaptive (Smart)',
+    adaptive: 'Adaptive (Smart)', // Add the label for the new strategy
   };
 
   return (
@@ -168,8 +176,8 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
       <div className="space-y-6">
         <Card className="bg-slate-800/50 border-slate-700">
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2 text-white"><RotateCcw className="w-5 h-5 text-purple-400" /><span>Switcher Controls & Settings</span></CardTitle>
-            <CardDescription className="text-gray-400">Configure proxy rotation behavior and filters.</CardDescription>
+            <CardTitle className="flex items-center space-x-2 text-white"><RotateCcw className="w-5 h-5 text-purple-400" /><span>Proxy Switcher</span></CardTitle>
+            <CardDescription className="text-gray-400">Automatically rotate through valid proxies with a kill switch.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
 
@@ -197,6 +205,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                             <DropdownMenuRadioItem value="latency-based">Latency-Based</DropdownMenuRadioItem>
                             <DropdownMenuRadioItem value="aggressive">Aggressive (Switch on Fail)</DropdownMenuRadioItem>
                             <DropdownMenuRadioItem value="prioritize-pinned">Prioritize Pinned</DropdownMenuRadioItem>
+                            {/* Add the new item to the dropdown */}
                             <DropdownMenuRadioItem value="adaptive">Adaptive (Smart)</DropdownMenuRadioItem>
                           </DropdownMenuRadioGroup>
                         </DropdownMenuContent>
@@ -204,10 +213,15 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                 </div>
             </div>
 
-            {switchMode === 'time' && (
+            {switchMode === 'time' ? (
               <div className="space-y-2">
                 <Label htmlFor="timer" className="text-white flex items-center"><Clock className="w-4 h-4 mr-2"/>Switch Interval (seconds)</Label>
                 <Input id="timer" type="number" min="5" max="300" value={switchInterval} onChange={(e) => setSwitchInterval(parseInt(e.target.value) || 30)} disabled={isRunningOrPaused} className="bg-slate-900/50 border-slate-600 text-white" />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="request-count" className="text-white flex items-center"><Repeat className="w-4 h-4 mr-2"/>Switch After (successful requests)</Label>
+                <Input id="request-count" type="number" min="1" max="100" value={switchRequestCount} onChange={(e) => setSwitchRequestCount(parseInt(e.target.value) || 10)} disabled={isRunningOrPaused || rotationStrategy === 'aggressive'} className="bg-slate-900/50 border-slate-600 text-white" />
               </div>
             )}
             
@@ -220,27 +234,6 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                     <Label htmlFor="cooldown-minutes" className="text-white flex items-center"><Timer className="w-4 h-4 mr-2"/>Cooldown (minutes)</Label>
                     <Input id="cooldown-minutes" type="number" min="0" value={cooldownMinutes} onChange={(e) => setCooldownMinutes(parseInt(e.target.value, 10) || 0)} disabled={isRunningOrPaused} className="bg-slate-900/50 border-slate-600 text-white" />
                 </div>
-            </div>
-            
-            <Separator className="my-4 bg-slate-700"/>
-            <div className="space-y-2">
-              <Label className="text-white text-base">AutoFill Sync Mode</Label>
-              <RadioGroup value={autoFillSyncMode} onValueChange={(value) => setAutoFillSyncMode(value as AutoFillSyncMode)} className="space-y-2 pt-2" disabled={isRunningOrPaused}>
-                <div className="flex items-start space-x-3">
-                  <RadioGroupItem value="safe" id="safe" className="mt-1"/>
-                  <div>
-                    <Label htmlFor="safe" className="text-white font-medium flex items-center gap-2"><Turtle className="w-4 h-4"/>Safe Mode</Label>
-                    <p className="text-xs text-gray-400">Prioritizes new IPs. Pauses AutoFill to wait for a proxy switch to complete.</p>
-                  </div>
-                </div>
-                <div className="flex items-start space-x-3">
-                  <RadioGroupItem value="fast" id="fast" className="mt-1"/>
-                  <div>
-                    <Label htmlFor="fast" className="text-white font-medium flex items-center gap-2"><Rabbit className="w-4 h-4"/>Fast Mode</Label>
-                    <p className="text-xs text-gray-400">Prioritizes speed. Does not wait for proxy switches and may use the same proxy twice.</p>
-                  </div>
-                </div>
-              </RadioGroup>
             </div>
 
             <Separator className="my-4 bg-slate-700"/>
@@ -294,12 +287,48 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
 
             {isRunningOrPaused && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Next switch in:</span>
-                  <span className="text-white font-mono">{remainingTime}s</span>
-                </div>
-                <Progress value={timeProgress} className="w-full" />
+                {switchMode === 'time' ? (
+                  <>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Next switch in:</span>
+                      <span className="text-white font-mono">{remainingTime}s</span>
+                    </div>
+                    <Progress value={timeProgress} className="w-full" />
+                  </>
+                ) : (
+                  <>
+                     <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Requests on current proxy:</span>
+                      <span className="text-white font-mono">{ rotationStrategy === 'aggressive' ? 'N/A' : `${successfulRequests} / ${switchRequestCount}` }</span>
+                    </div>
+                    <Progress value={rotationStrategy === 'aggressive' ? 0 : requestProgress} className="w-full" />
+                  </>
+                )}
               </div>
+            )}
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2 text-white">{isRunningOrPaused && currentProxy ? <Wifi className="w-5 h-5 text-green-400" /> : <WifiOff className="w-5 h-5 text-gray-400" />}<span>Current Proxy</span></CardTitle>
+          </CardHeader>
+          <CardContent>
+            {currentProxy && isRunningOrPaused ? (
+              <div className="space-y-3">
+                <div className="p-3 bg-green-900/20 border border-green-500/30 rounded-lg">
+                  <div className="font-mono text-green-400 text-sm mb-2">{currentProxy.proxy}</div>
+                  <div className="flex items-center space-x-2">
+                    <Badge className="bg-purple-600 text-white">{currentProxy.portType}</Badge>
+                    <span className="text-xs text-gray-400">{currentProxy.latency}ms</span>
+                    <span className="text-xs text-blue-400">{currentProxy.location}</span>
+                  </div>
+                </div>
+                <Button onClick={() => onTestConnection(currentProxy.proxy)} className="w-full bg-sky-600 hover:bg-sky-700"><Zap className="w-4 h-4 mr-2" />Manual Test</Button>
+                <div className="text-sm text-gray-400 mt-2">Total Switches: {switchCount}</div>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-gray-500"><WifiOff className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>No active proxy</p><p className="text-xs mt-1">Start the switcher to activate</p></div>
             )}
           </CardContent>
         </Card>
@@ -371,8 +400,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                       {allValidProxies.slice(0, visibleProxyCount).map((proxy) => {
                         const isDown = downedProxies.has(proxy.proxy);
                         const isManuallyRemoved = manualRemovals.has(proxy.proxy);
-                        // **FIX 2**: Highlighting logic is re-introduced here
-                        const isActive = activeProxy?.proxy === proxy.proxy && isRunningOrPaused;
+                        const isActive = currentProxy?.proxy === proxy.proxy && isRunningOrPaused;
                         const stats = sessionStats[proxy.proxy] ?? { success: 0, fail: 0 };
                         const failureTimestamp = downedProxies.get(proxy.proxy);
 
