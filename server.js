@@ -12,6 +12,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
 const getTypeFromPort = (proxyString) => {
   try {
     const port = parseInt(proxyString.split(':')[1], 10);
@@ -25,22 +27,18 @@ const getTypeFromPort = (proxyString) => {
   }
 };
 
-// This function provides more detailed error messages
 const getErrorMessage = (error) => {
     if (error.response) {
-        // The request was made and the server responded with a status code
         return `Request failed with status: ${error.response.status} ${error.response.statusText}`;
     } else if (error.request) {
-        // The request was made but no response was received
         return 'No response from server. Check proxy connection or target URL.';
     } else {
-        // Something happened in setting up the request that triggered an Error
         return error.message;
     }
 };
 
 app.post('/api/check-proxy', async (req, res) => {
-    const { proxy, checkCount = 1 } = req.body;
+    const { proxy, checkCount = 1, expectedString, provider, targetUrl } = req.body; 
     if (!proxy) { return res.status(400).json({ isValid: false, error: 'Invalid proxy format' }); }
     
     let agent;
@@ -51,7 +49,8 @@ app.post('/api/check-proxy', async (req, res) => {
         agent = new HttpsProxyAgent(`http://${proxy}`);
     }
 
-    const validationUrl = 'https://httpbin.org/get';
+    // Use httpbin for anonymity checks, but allow Cloudflare worker for location
+    const anonymityCheckUrl = 'https://httpbin.org/get';
     let successes = 0;
     let totalLatency = 0;
     let anonymity = 'Unknown';
@@ -59,14 +58,21 @@ app.post('/api/check-proxy', async (req, res) => {
     for (let i = 0; i < checkCount; i++) {
         try {
             const startTime = Date.now();
-            const checkResponse = await axios.get(validationUrl, { httpsAgent: agent, timeout: 10000 });
+            // We always check against httpbin to get headers for anonymity check
+            const checkResponse = await axios.get(anonymityCheckUrl, { httpAgent: agent, httpsAgent: agent, timeout: 10000 });
             totalLatency += Date.now() - startTime;
+            
+            if (expectedString && typeof checkResponse.data === 'string' && !checkResponse.data.includes(expectedString)) {
+              throw new Error('Content validation failed: expected string not found.');
+            }
+
             successes++;
+            
             if (i === 0) {
-                const headers = checkResponse.data.headers;
-                if (!headers['X-Forwarded-For'] && !headers['Via']) { anonymity = 'Elite'; }
-                else if (headers['X-Forwarded-For']) { anonymity = 'Transparent'; }
-                else { anonymity = 'Anonymous'; }
+              const headers = checkResponse.data.headers;
+              if (!headers['X-Forwarded-For'] && !headers['Via']) { anonymity = 'Elite'; }
+              else if (headers['X-Forwarded-For']) { anonymity = 'Transparent'; }
+              else { anonymity = 'Anonymous'; }
             }
         } catch (error) {
             console.error(`Check ${i + 1} for ${proxy} failed: ${getErrorMessage(error)}`);
@@ -81,20 +87,44 @@ app.post('/api/check-proxy', async (req, res) => {
     }
 
     try {
-        const ipAddress = proxy.split(':')[0];
-        const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,proxy,hosting`);
-        if (geoResponse.data.status !== 'success') { throw new Error('Failed to get geo info'); }
+        let finalGeoData = {};
+        // *** FIX: Logic is now separated. We always check health/anonymity first.
+        // Then, we get geo data based on the selected provider. ***
+        if (provider === 'Cloudflare' && targetUrl) {
+            const workerResponse = await axios.get(targetUrl, { httpAgent: agent, httpsAgent: agent, timeout: 10000 });
+            const workerData = workerResponse.data;
+            finalGeoData = {
+                location: workerData.source_country,
+                country: workerData.source_country,
+                city: 'N/A (CF Worker)',
+                isp: 'N/A (CF Worker)',
+                apiType: 'Cloudflare'
+            };
+        } else {
+            const ipAddress = proxy.split(':')[0];
+            const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as`);
+            if (geoResponse.data.status === 'success') {
+                finalGeoData = {
+                    location: geoResponse.data.countryCode || 'Unknown',
+                    city: geoResponse.data.city,
+                    country: geoResponse.data.country,
+                    isp: geoResponse.data.as,
+                    apiType: 'ip-api.com'
+                };
+            }
+        }
+        
         res.json({
-            proxy, isValid: true, latency: averageLatency, healthScore, anonymity, portType: proxyType,
-            location: geoResponse.data.countryCode || 'Unknown', city: geoResponse.data.city,
-            country: geoResponse.data.country, isp: geoResponse.data.as,
-            apiType: geoResponse.data.proxy ? 'Proxy' : (geoResponse.data.hosting ? 'Hosting' : 'Direct'),
+            proxy, isValid: true, latency: averageLatency, healthScore, anonymity, portType: getTypeFromPort(proxy),
+            ...finalGeoData
         });
+
     } catch (error) {
         console.error(`Geo check for ${proxy} failed: ${error.message}`);
-        res.json({ proxy, isValid: true, latency: averageLatency, healthScore, anonymity, portType: proxyType });
+        res.json({ proxy, isValid: true, latency: averageLatency, healthScore, anonymity, portType: getTypeFromPort(proxy) });
     }
 });
+
 
 app.post('/api/test-connection', async (req, res) => {
   const { proxy } = req.body;
@@ -114,7 +144,7 @@ app.post('/api/test-connection', async (req, res) => {
 
   try {
     const startTime = Date.now();
-    const response = await axios.get(testUrl, { httpsAgent: agent, timeout: 10000 });
+    const response = await axios.get(testUrl, { httpAgent: agent, httpsAgent: agent, timeout: 10000 });
     const latency = Date.now() - startTime;
 
     const originIp = response.data.origin.split(',')[0];
@@ -158,17 +188,15 @@ app.post('/api/test-connection', async (req, res) => {
 app.post('/api/auto-fill', async (req, res) => {
   const { email, targetUrl, proxy, selectors } = req.body;
   
-  if (!email || !targetUrl || !proxy || !selectors) {
+  if (!email || !targetUrl || !selectors) {
     return res.status(400).json({ 
       success: false, 
-      message: 'Missing required parameters: email, targetUrl, proxy, or selectors' 
+      message: 'Missing required parameters: email, targetUrl, or selectors' 
     });
   }
 
   let browser;
   try {
-    const proxyType = getTypeFromPort(proxy);
-    
     const browserArgs = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -178,13 +206,16 @@ app.post('/api/auto-fill', async (req, res) => {
       '--no-zygote',
       '--disable-gpu'
     ];
-
-    if (proxyType === 'HTTP' || proxyType === 'HTTPS') {
-      browserArgs.push(`--proxy-server=http://${proxy}`);
-    } else if (proxyType === 'SOCKS4') {
-      browserArgs.push(`--proxy-server=socks4://${proxy}`);
-    } else if (proxyType === 'SOCKS5') {
-      browserArgs.push(`--proxy-server=socks5://${proxy}`);
+    
+    if (proxy) {
+        const proxyType = getTypeFromPort(proxy);
+        if (proxyType === 'HTTP' || proxyType === 'HTTPS') {
+          browserArgs.push(`--proxy-server=http://${proxy}`);
+        } else if (proxyType === 'SOCKS4') {
+          browserArgs.push(`--proxy-server=socks4://${proxy}`);
+        } else if (proxyType === 'SOCKS5') {
+          browserArgs.push(`--proxy-server=socks5://${proxy}`);
+        }
     }
 
     browser = await puppeteer.launch({
@@ -195,7 +226,8 @@ app.post('/api/auto-fill', async (req, res) => {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-    await page.waitForTimeout(2000);
+    
+    await sleep(2000); 
     
     try {
       await page.waitForSelector(selectors.emailSelector, { timeout: 10000 });
@@ -225,7 +257,8 @@ app.post('/api/auto-fill', async (req, res) => {
     try {
       await page.waitForSelector(selectors.submitSelector, { timeout: 10000 });
       await page.click(selectors.submitSelector);
-      await page.waitForTimeout(3000);
+      
+      await sleep(3000);
     } catch (error) {
       throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
     }
@@ -234,7 +267,7 @@ app.post('/api/auto-fill', async (req, res) => {
       success: true,
       message: `Successfully submitted form for ${email}`,
       email: email,
-      proxy: proxy
+      proxy: proxy || 'Direct Connection'
     });
     
   } catch (error) {
@@ -243,7 +276,7 @@ app.post('/api/auto-fill', async (req, res) => {
       success: false,
       message: error.message || 'Form submission failed',
       email: email,
-      proxy: proxy
+      proxy: proxy || 'Direct Connection'
     });
   } finally {
     if (browser) {
@@ -259,38 +292,56 @@ app.post('/api/custom-test', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Proxy and targetUrl are required.' });
   }
 
-  let agent;
-  const proxyType = getTypeFromPort(proxy);
-  if (proxyType === 'SOCKS4' || proxyType === 'SOCKS5') {
-      agent = new SocksProxyAgent(`socks://${proxy}`);
-  } else {
-      agent = new HttpsProxyAgent(`http://${proxy}`);
-  }
-
+  let browser;
   try {
     const startTime = Date.now();
-    const response = await axios.get(targetUrl, {
-      httpsAgent: agent,
-      timeout: 15000 
-    });
+    const browserArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu'
+    ];
+    
+    const proxyType = getTypeFromPort(proxy);
+    if (proxyType === 'HTTP' || proxyType === 'HTTPS') {
+      browserArgs.push(`--proxy-server=http://${proxy}`);
+    } else if (proxyType === 'SOCKS4') {
+      browserArgs.push(`--proxy-server=socks4://${proxy}`);
+    } else if (proxyType === 'SOCKS5') {
+      browserArgs.push(`--proxy-server=socks5://${proxy}`);
+    }
+
+    browser = await puppeteer.launch({ headless: true, args: browserArgs });
+    const page = await browser.newPage();
+    const response = await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+    
+    if (!response || !response.ok()) {
+        throw new Error(`Request failed with status: ${response?.status()}`);
+    }
+
+    const responseBody = await response.json();
     const latency = Date.now() - startTime;
 
     res.json({
       success: true,
       message: `Successfully received response from your endpoint.`,
-      status: response.status,
+      status: response.status(),
       latency: latency,
-      data: response.data,
+      data: responseBody,
     });
   } catch (error) {
-    const errorMessage = getErrorMessage(error);
-    console.error(`Custom test for ${proxy} to ${targetUrl} failed:`, errorMessage);
+    console.error(`Custom test for ${proxy} to ${targetUrl} failed:`, error.message);
     res.status(500).json({ 
         success: false, 
-        message: errorMessage,
-        statusCode: error.response?.status,
-        error: error.message
+        message: error.message,
     });
+  } finally {
+    if (browser) {
+        await browser.close();
+    }
   }
 });
 

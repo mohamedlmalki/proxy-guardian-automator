@@ -19,7 +19,7 @@ interface ProxyCheckerProps {
   results: ValidProxy[];
   isChecking: boolean;
   progress: number;
-  onCheckProxies: (rateLimit: string, targetUrl: string, checkCount: number, provider: string, apiKey: string) => void;
+  onCheckProxies: (rateLimit: string, targetUrl: string, checkCount: number, provider: string, apiKey: string, contentCheckString: string) => void;
   onAbort: () => void;
   onClearResults: () => void;
   onRemoveResults: (proxiesToRemove: string[]) => void;
@@ -27,7 +27,8 @@ interface ProxyCheckerProps {
   onSetPinned: (proxiesToPin: string[], pinStatus: boolean) => void;
 }
 
-const API_PROVIDERS = ['ip-api.com', 'ipinfo.io'];
+// **MODIFIED** Added 'Cloudflare' as an API provider
+const API_PROVIDERS = ['Cloudflare', 'ip-api.com', 'ipinfo.io'];
 const PROTOCOL_TYPES = ['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5'];
 const ANONYMITY_LEVELS = ['Elite', 'Anonymous', 'Transparent'];
 
@@ -54,10 +55,12 @@ export const ProxyChecker = ({
   const [selectedProxies, setSelectedProxies] = useState<string[]>([]);
   
   const [targetUrl, setTargetUrl] = useState('');
+  const [contentCheckString, setContentCheckString] = useState('');
   const [checkCount, setCheckCount] = useState(3);
   const [rateLimit, setRateLimit] = useState('25');
-  const [apiProvider, setApiProvider] = useState('ip-api.com');
-  const [apiKey, setApiKey] = useState('332fb85e7a5f5c');
+  // **MODIFIED** Set 'Cloudflare' as the default provider
+  const [apiProvider, setApiProvider] = useState('Cloudflare');
+  const [apiKey, setApiKey] = useState(''); // API Key not needed for Cloudflare or ip-api.com
 
   const displayResults = useMemo(() => {
     let filtered = [...results];
@@ -224,13 +227,30 @@ export const ProxyChecker = ({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="targetUrl" className="text-white">Target URL for Validation (Optional)</Label>
+            <Label htmlFor="targetUrl" className="text-white">Target URL for Validation</Label>
             <Input
               id="targetUrl"
               type="text"
-              placeholder="Default: httpbin.org/get"
+              placeholder="e.g. your-worker.dev/log"
               value={targetUrl}
               onChange={(e) => setTargetUrl(e.target.value)}
+              disabled={isChecking}
+              className="bg-slate-900/50 border-slate-600 text-white"
+            />
+            {/* **NEW** Conditional description for Cloudflare provider */}
+            {apiProvider === 'Cloudflare' && (
+                <p className="text-xs text-sky-400">Enter your Cloudflare Worker URL ending in /log</p>
+            )}
+          </div>
+          
+          <div className="space-y-2">
+            <Label htmlFor="contentCheck" className="text-white">Content Check String (Optional)</Label>
+            <Input
+              id="contentCheck"
+              type="text"
+              placeholder="e.g., 'Welcome' or a unique footer text"
+              value={contentCheckString}
+              onChange={(e) => setContentCheckString(e.target.value)}
               disabled={isChecking}
               className="bg-slate-900/50 border-slate-600 text-white"
             />
@@ -274,7 +294,7 @@ export const ProxyChecker = ({
 
           <div className="flex space-x-2">
             {!isChecking ? (
-              <Button onClick={() => onCheckProxies(rateLimit, targetUrl, checkCount, apiProvider, apiKey)} className="w-full bg-blue-600 hover:bg-blue-700">Check Proxies</Button>
+              <Button onClick={() => onCheckProxies(rateLimit, targetUrl, checkCount, apiProvider, apiKey, contentCheckString)} className="w-full bg-blue-600 hover:bg-blue-700">Check Proxies</Button>
             ) : (
               <Button onClick={onAbort} variant="destructive" className="w-full">Abort</Button>
             )}

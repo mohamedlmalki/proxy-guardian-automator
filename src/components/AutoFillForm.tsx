@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Dispatch, SetStateAction } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FormInput, Play, Pause, Mail, Globe, AlertTriangle } from "lucide-react";
+import { FormInput, Play, Pause, Mail, Globe, AlertTriangle, GitBranch, Share2, Server } from "lucide-react";
 import { ValidProxy } from "@/pages/Index";
+import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 
 export interface FormSelectors {
   emailSelector: string;
@@ -16,38 +17,54 @@ export interface FormSelectors {
   phoneSelector?: string;
 }
 
+// **MODIFIED** Props interface to receive state from parent
 interface AutoFillFormProps {
   activeProxy: ValidProxy | null;
-  onStartAutoFill: (emails: string[], targetUrl: string, delay: number, selectors: FormSelectors) => void;
+  onStartAutoFill: (selectors: FormSelectors) => void;
   onStopAutoFill: () => void;
   onRequestSuccess: () => void;
-  onRequestFailure: () => void; // New prop for reporting failures
+  onRequestFailure: () => void;
   isRunning: boolean;
   progress: number;
   processedCount: number;
   currentEmail: string;
+  autoFillMode: 'direct' | 'switcher';
+  setAutoFillMode: (mode: 'direct' | 'switcher') => void;
+  
+  // **NEW** Props for lifted state
+  emailData: string;
+  setEmailData: Dispatch<SetStateAction<string>>;
+  targetUrl: string;
+  setTargetUrl: Dispatch<SetStateAction<string>>;
+  delay: number;
+  setDelay: Dispatch<SetStateAction<number>>;
+  selectors: FormSelectors;
+  setSelectors: Dispatch<SetStateAction<FormSelectors>>;
 }
 
 export const AutoFillForm = ({
   activeProxy,
   onStartAutoFill,
   onStopAutoFill,
-  onRequestSuccess,
-  onRequestFailure, // Destructure new prop
+  // ... other props are not used directly in this component's logic but are needed by the parent
   isRunning,
   progress,
   processedCount,
-  currentEmail
+  currentEmail,
+  autoFillMode,
+  setAutoFillMode,
+  // **NEW** Destructure the new props
+  emailData,
+  setEmailData,
+  targetUrl,
+  setTargetUrl,
+  delay,
+  setDelay,
+  selectors,
+  setSelectors
 }: AutoFillFormProps) => {
-  const [emailData, setEmailData] = useState("");
-  const [targetUrl, setTargetUrl] = useState("");
-  const [delay, setDelay] = useState(2);
-  const [selectors, setSelectors] = useState<FormSelectors>({
-    emailSelector: 'input[type="email"], input[name="email"], #email',
-    submitSelector: 'button[type="submit"], input[type="submit"], .submit-btn',
-    nameSelector: 'input[name="name"], input[name="first_name"], #name',
-    phoneSelector: 'input[name="phone"], input[type="tel"], #phone'
-  });
+
+  // **REMOVED** local useState hooks for form inputs
 
   const emails = emailData
     .split('\n')
@@ -55,8 +72,15 @@ export const AutoFillForm = ({
     .filter(line => line.length > 0 && line.includes('@'));
   
   const handleStartClick = () => {
-    onStartAutoFill(emails, targetUrl, delay, selectors);
+    onStartAutoFill(selectors);
   }
+  
+  const isStartDisabled = () => {
+    if (isRunning) return true;
+    if (emails.length === 0 || !targetUrl) return true;
+    if (autoFillMode === 'switcher' && !activeProxy) return true;
+    return false;
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -71,8 +95,52 @@ export const AutoFillForm = ({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          
+          <div className="space-y-3">
+            <Label className="text-white">Proxy Mode</Label>
+            <RadioGroup value={autoFillMode} onValueChange={setAutoFillMode as (value: string) => void} className="flex space-x-4 pt-2" disabled={isRunning}>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="switcher" id="switcher" />
+                <Label htmlFor="switcher" className="text-white flex items-center gap-2"><GitBranch className="w-4 h-4"/>Switcher Mode</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="direct" id="direct" />
+                <Label htmlFor="direct" className="text-white flex items-center gap-2"><Share2 className="w-4 h-4"/>Direct Mode</Label>
+              </div>
+            </RadioGroup>
+          </div>
+
+          {autoFillMode === 'switcher' ? (
+            activeProxy ? (
+              <div className="p-3 bg-green-900/20 border border-green-500/30 rounded-lg">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Globe className="w-4 h-4 text-green-400" />
+                  <span className="text-green-400 text-sm font-medium">Using Active Proxy from Switcher</span>
+                </div>
+                <div className="font-mono text-xs text-white">{activeProxy.proxy}</div>
+                <Badge className="mt-2 bg-purple-600 text-white text-xs">{activeProxy.portType}</Badge>
+              </div>
+            ) : (
+              <div className="p-3 bg-red-900/20 border border-red-500/30 rounded-lg">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400" />
+                  <span className="text-red-400 text-sm">No active proxy. Start the switcher first.</span>
+                </div>
+              </div>
+            )
+          ) : (
+            <div className="p-3 bg-sky-900/20 border border-sky-500/30 rounded-lg">
+              <div className="flex items-center space-x-2">
+                <Server className="w-4 h-4 text-sky-400" />
+                <span className="text-sky-400 text-sm font-medium">Using Direct Connection</span>
+              </div>
+              <p className="text-gray-400 text-xs mt-1">Submissions will be sent from the server's original IP address (no proxy).</p>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="targetUrl" className="text-white">Target URL</Label>
+            {/* **MODIFIED** Inputs now use props for state */}
             <Input 
               id="targetUrl" 
               placeholder="https://example.com/signup" 
@@ -114,20 +182,6 @@ export const AutoFillForm = ({
                 disabled={isRunning}
                 className="bg-slate-900/50 border-slate-600 text-white text-xs"
               />
-              <Input
-                placeholder="Name field selector (optional)"
-                value={selectors.nameSelector || ''}
-                onChange={(e) => setSelectors({...selectors, nameSelector: e.target.value})}
-                disabled={isRunning}
-                className="bg-slate-900/50 border-slate-600 text-white text-xs"
-              />
-              <Input
-                placeholder="Phone field selector (optional)"
-                value={selectors.phoneSelector || ''}
-                onChange={(e) => setSelectors({...selectors, phoneSelector: e.target.value})}
-                disabled={isRunning}
-                className="bg-slate-900/50 border-slate-600 text-white text-xs"
-              />
             </div>
           </div>
           
@@ -149,30 +203,11 @@ export const AutoFillForm = ({
             )}
           </div>
           
-          {activeProxy ? (
-            <div className="p-3 bg-green-900/20 border border-green-500/30 rounded-lg">
-              <div className="flex items-center space-x-2 mb-2">
-                <Globe className="w-4 h-4 text-green-400" />
-                <span className="text-green-400 text-sm font-medium">Active Proxy</span>
-              </div>
-              <div className="font-mono text-xs text-white">{activeProxy.proxy}</div>
-              <Badge className="mt-2 bg-purple-600 text-white text-xs">{activeProxy.portType}</Badge>
-            </div>
-          ) : (
-            <div className="p-3 bg-red-900/20 border border-red-500/30 rounded-lg">
-              <div className="flex items-center space-x-2">
-                <AlertTriangle className="w-4 h-4 text-red-400" />
-                <span className="text-red-400 text-sm">No active proxy</span>
-              </div>
-              <p className="text-gray-400 text-xs mt-1">Start the proxy switcher to enable auto-fill</p>
-            </div>
-          )}
-          
           <div className="flex space-x-2">
             {!isRunning ? (
               <Button 
                 onClick={handleStartClick} 
-                disabled={!activeProxy || emails.length === 0 || !targetUrl} 
+                disabled={isStartDisabled()} 
                 className="flex-1 bg-green-600 hover:bg-green-700"
               >
                 <Play className="w-4 h-4 mr-2" />

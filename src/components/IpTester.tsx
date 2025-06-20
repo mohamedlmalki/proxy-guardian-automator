@@ -19,16 +19,12 @@ export const IpTester = ({ activeProxy }: IpTesterProps) => {
 
 
     const handleTestClick = async () => {
-        if (!activeProxy) return;
+        if (!activeProxy || !workerUrl) return;
 
         setIsLoading(true);
         setResultMessage("");
         setResponseData(null);
         setResultSuccess(null);
-
-        // --- THIS IS THE FIX ---
-        // Ensure the URL ends with /log, removing any trailing slash first
-        const targetUrlForLog = workerUrl.replace(/\/$/, "") + '/log';
 
         try {
             const response = await fetch('http://localhost:3001/api/custom-test', {
@@ -36,9 +32,10 @@ export const IpTester = ({ activeProxy }: IpTesterProps) => {
                 headers: {
                     'Content-Type': 'application/json',
                 },
+                // *** FIX: Send the workerUrl directly as the targetUrl ***
                 body: JSON.stringify({
                     proxy: activeProxy.proxy,
-                    targetUrl: targetUrlForLog, // Use the corrected URL
+                    targetUrl: workerUrl,
                 }),
             });
 
@@ -46,12 +43,12 @@ export const IpTester = ({ activeProxy }: IpTesterProps) => {
 
             if (response.ok) {
                 setResultSuccess(true);
-                // The actual response from the /log path is just a confirmation
-                setResultMessage(`Success! Log was saved by the worker. Latency: ${data.latency}ms.`);
+                setResultMessage(`Success! Request logged by the worker. Latency: ${data.latency}ms.`);
                 setResponseData(data.data);
             } else {
                 setResultSuccess(false);
                 setResultMessage(`Error: ${data.message || 'An unknown error occurred.'}`);
+                setResponseData(data.data); // Also show data on error if available
             }
 
         } catch (error) {
@@ -86,7 +83,7 @@ export const IpTester = ({ activeProxy }: IpTesterProps) => {
                     <Label htmlFor="workerUrl" className="text-white">Your Worker/Endpoint URL</Label>
                     <Input 
                         id="workerUrl" 
-                        placeholder="https://my-worker.example.workers.dev" 
+                        placeholder="https://...workers.dev/log" 
                         value={workerUrl} 
                         onChange={(e) => setWorkerUrl(e.target.value)} 
                         disabled={isLoading}
