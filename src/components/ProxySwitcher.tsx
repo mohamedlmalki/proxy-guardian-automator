@@ -12,8 +12,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { CooldownTimer } from "@/components/CooldownTimer";
-import { Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown, Filter, RefreshCw, Loader, Ban, PauseCircle, Undo2 } from "lucide-react";
+import { AlertTriangle, Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown, Filter, RefreshCw, Loader, Ban, PauseCircle, Undo2 } from "lucide-react";
 import { ValidProxy, TestResult, ConnectionLogEntry } from "@/pages/Index";
+import { toast } from "sonner";
 
 type SwitchMode = 'time' | 'requests';
 type FilterMode = 'whitelist' | 'blacklist';
@@ -56,8 +57,8 @@ interface ProxySwitcherProps {
   setIspFilterList: (list: string) => void;
   switchMode: SwitchMode;
   setSwitchMode: (mode: SwitchMode) => void;
-  rotationStrategy: RotationStrategy; 
-  setRotationStrategy: (strategy: RotationStrategy) => void; 
+  rotationStrategy: RotationStrategy;
+  setRotationStrategy: (strategy: RotationStrategy) => void;
   onStart: () => void;
   onStop: () => void;
   onPause: () => void;
@@ -119,7 +120,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
   const [selectedLog, setSelectedLog] = useState<ConnectionLogEntry | null>(null);
 
   const allValidProxies = validProxies.filter(p => p.isValid);
-  
+
   const handleReTestClick = async (proxy: string) => {
     setTestingProxy(proxy);
     await onReTestProxy(proxy);
@@ -136,7 +137,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
 
   const timeProgress = remainingTime > 0 && switchInterval > 0 ? ((switchInterval - remainingTime) / switchInterval) * 100 : 0;
   const requestProgress = successfulRequests > 0 && switchRequestCount > 0 ? (successfulRequests / switchRequestCount) * 100 : 0;
-  
+
   const currentProxy = validProxies[currentProxyIndex];
   const isRunningOrPaused = switcherStatus === 'running' || switcherStatus === 'paused';
 
@@ -146,7 +147,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     if (healthScore >= 50) return 'bg-yellow-500';
     return 'bg-red-500';
   };
-  
+
   const strategyLabels: Record<RotationStrategy, string> = {
     sequential: 'Sequential',
     random: 'Random',
@@ -155,6 +156,16 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     aggressive: 'Aggressive (Switch on Fail)',
     'prioritize-pinned': 'Prioritize Pinned',
     adaptive: 'Adaptive (Smart)',
+  };
+  
+  const handleSwitchModeChange = (value: SwitchMode) => {
+    if (value === 'time') {
+      toast.warning("Time mode is currently under development.", {
+        duration: 5000,
+      });
+    } else {
+      setSwitchMode(value);
+    }
   };
 
   return (
@@ -170,9 +181,15 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
             <div className="grid grid-cols-2 gap-4">
                  <div className="space-y-2">
                     <Label className="text-white">Switch Mode</Label>
-                    <RadioGroup value={switchMode} onValueChange={(value: SwitchMode) => setSwitchMode(value)} className="flex space-x-4 pt-2" disabled={isRunningOrPaused}>
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="time" id="time" /><Label htmlFor="time" className="text-white">Time</Label></div>
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="requests" id="requests" /><Label htmlFor="requests" className="text-white">Requests</Label></div>
+                    <RadioGroup value={switchMode} onValueChange={handleSwitchModeChange} className="flex space-x-4 pt-2" disabled={isRunningOrPaused}>
+                        <div className="flex items-center space-x-2 cursor-pointer" onClick={() => handleSwitchModeChange('time')}>
+                            <RadioGroupItem value="time" id="time" />
+                            <Label htmlFor="time" className="text-white cursor-pointer">Time</Label>
+                        </div>
+                        <div className="flex items-center space-x-2 cursor-pointer" onClick={() => handleSwitchModeChange('requests')}>
+                            <RadioGroupItem value="requests" id="requests" />
+                            <Label htmlFor="requests" className="text-white cursor-pointer">Requests</Label>
+                        </div>
                     </RadioGroup>
                 </div>
                  <div className="space-y-2">
