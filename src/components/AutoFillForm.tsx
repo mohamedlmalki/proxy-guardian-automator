@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FormInput, Play, Pause, Mail, Globe, AlertTriangle, GitBranch, Share2, Server } from "lucide-react";
+import { FormInput, Play, Pause, Mail, Globe, AlertTriangle, GitBranch, Share2, Server, Key } from "lucide-react";
 import { ValidProxy } from "@/pages/Index";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 
@@ -17,21 +17,16 @@ export interface FormSelectors {
   phoneSelector?: string;
 }
 
-// **MODIFIED** Props interface to receive state from parent
 interface AutoFillFormProps {
   activeProxy: ValidProxy | null;
   onStartAutoFill: (selectors: FormSelectors) => void;
   onStopAutoFill: () => void;
-  onRequestSuccess: () => void;
-  onRequestFailure: () => void;
   isRunning: boolean;
   progress: number;
   processedCount: number;
   currentEmail: string;
   autoFillMode: 'direct' | 'switcher';
   setAutoFillMode: (mode: 'direct' | 'switcher') => void;
-  
-  // **NEW** Props for lifted state
   emailData: string;
   setEmailData: Dispatch<SetStateAction<string>>;
   targetUrl: string;
@@ -40,20 +35,20 @@ interface AutoFillFormProps {
   setDelay: Dispatch<SetStateAction<number>>;
   selectors: FormSelectors;
   setSelectors: Dispatch<SetStateAction<FormSelectors>>;
+  successKeyword: string;
+  setSuccessKeyword: Dispatch<SetStateAction<string>>;
 }
 
 export const AutoFillForm = ({
   activeProxy,
   onStartAutoFill,
   onStopAutoFill,
-  // ... other props are not used directly in this component's logic but are needed by the parent
   isRunning,
   progress,
   processedCount,
   currentEmail,
   autoFillMode,
   setAutoFillMode,
-  // **NEW** Destructure the new props
   emailData,
   setEmailData,
   targetUrl,
@@ -61,10 +56,10 @@ export const AutoFillForm = ({
   delay,
   setDelay,
   selectors,
-  setSelectors
+  setSelectors,
+  successKeyword,
+  setSuccessKeyword
 }: AutoFillFormProps) => {
-
-  // **REMOVED** local useState hooks for form inputs
 
   const emails = emailData
     .split('\n')
@@ -91,7 +86,7 @@ export const AutoFillForm = ({
             <span>Auto Fill Configuration</span>
           </CardTitle>
           <CardDescription className="text-gray-400">
-            Configure automatic form filling with proxy rotation
+            Configure automatic form filling with proxy rotation and keyword verification.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -140,7 +135,6 @@ export const AutoFillForm = ({
 
           <div className="space-y-2">
             <Label htmlFor="targetUrl" className="text-white">Target URL</Label>
-            {/* **MODIFIED** Inputs now use props for state */}
             <Input 
               id="targetUrl" 
               placeholder="https://example.com/signup" 
@@ -151,6 +145,24 @@ export const AutoFillForm = ({
             />
           </div>
           
+          <div className="space-y-2">
+            <Label htmlFor="successKeyword" className="text-white flex items-center space-x-2">
+              <Key className="w-4 h-4"/>
+              <span>Success Keyword (Optional)</span>
+            </Label>
+            <Input 
+              id="successKeyword" 
+              placeholder="e.g., 'Thank you for your submission'" 
+              value={successKeyword} 
+              onChange={(e) => setSuccessKeyword(e.target.value)} 
+              disabled={isRunning} 
+              className="bg-slate-900/50 border-slate-600 text-white" 
+            />
+             <CardDescription className="text-gray-400 text-xs">
+                Checks for text in the page UI or network response to confirm success.
+            </CardDescription>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="delay" className="text-white">Delay between submissions (seconds)</Label>
             <Input 

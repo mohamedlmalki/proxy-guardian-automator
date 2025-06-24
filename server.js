@@ -49,7 +49,6 @@ app.post('/api/check-proxy', async (req, res) => {
         agent = new HttpsProxyAgent(`http://${proxy}`);
     }
 
-    // Use httpbin for anonymity checks, but allow Cloudflare worker for location
     const anonymityCheckUrl = 'https://httpbin.org/get';
     let successes = 0;
     let totalLatency = 0;
@@ -58,7 +57,6 @@ app.post('/api/check-proxy', async (req, res) => {
     for (let i = 0; i < checkCount; i++) {
         try {
             const startTime = Date.now();
-            // We always check against httpbin to get headers for anonymity check
             const checkResponse = await axios.get(anonymityCheckUrl, { httpAgent: agent, httpsAgent: agent, timeout: 10000 });
             totalLatency += Date.now() - startTime;
             
@@ -88,8 +86,6 @@ app.post('/api/check-proxy', async (req, res) => {
 
     try {
         let finalGeoData = {};
-        // *** FIX: Logic is now separated. We always check health/anonymity first.
-        // Then, we get geo data based on the selected provider. ***
         if (provider === 'Cloudflare' && targetUrl) {
             const workerResponse = await axios.get(targetUrl, { httpAgent: agent, httpsAgent: agent, timeout: 10000 });
             const workerData = workerResponse.data;
@@ -186,7 +182,7 @@ app.post('/api/test-connection', async (req, res) => {
 });
 
 app.post('/api/auto-fill', async (req, res) => {
-  const { email, targetUrl, proxy, selectors } = req.body;
+  const { email, targetUrl, proxy, selectors, successKeyword } = req.body;
   
   if (!email || !targetUrl || !selectors) {
     return res.status(400).json({ 
@@ -224,6 +220,17 @@ app.post('/api/auto-fill', async (req, res) => {
     });
 
     const page = await browser.newPage();
+    
+    let networkResponseText = '';
+    page.on('response', async (response) => {
+        try {
+            const text = await response.text();
+            networkResponseText += text + '\n';
+        } catch (e) {
+            // Ignore errors for responses that have no body
+        }
+    });
+    
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
     
@@ -256,11 +263,25 @@ app.post('/api/auto-fill', async (req, res) => {
     
     try {
       await page.waitForSelector(selectors.submitSelector, { timeout: 10000 });
-      await page.click(selectors.submitSelector);
+      await Promise.all([
+          page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }),
+          page.click(selectors.submitSelector)
+      ]);
       
-      await sleep(3000);
     } catch (error) {
-      throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
+      // This is not a fatal error, as some forms submit without navigation.
+      // We will check for the keyword on the current page.
+      console.log(`Navigation did not happen after click, or it timed out. This might be expected.`);
+    }
+
+    if (successKeyword) {
+      await sleep(1000); // Give a moment for any final scripts to run
+      const pageContent = await page.content();
+      const keywordFound = pageContent.includes(successKeyword) || networkResponseText.includes(successKeyword);
+      
+      if (!keywordFound) {
+        throw new Error(`Keyword "${successKeyword}" not found in UI or network response.`);
+      }
     }
     
     res.json({
