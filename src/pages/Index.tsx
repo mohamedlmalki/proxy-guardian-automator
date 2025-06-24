@@ -129,12 +129,10 @@ const Index = () => {
   const isSwitchingRef = useRef(false);
   const isAutoFillRunningRef = useRef(isAutoFillRunning);
   const importFileInputRef = useRef<HTMLInputElement>(null);
-  // *** FIX 1: Create a ref to hold the current active proxy ***
   const activeProxyRef = useRef<ValidProxy | null>(null);
 
   useEffect(() => { isAutoFillRunningRef.current = isAutoFillRunning }, [isAutoFillRunning]);
   
-  // *** FIX 2: Keep the ref synchronized with the state ***
   useEffect(() => {
     activeProxyRef.current = activeProxy;
   }, [activeProxy]);
@@ -399,7 +397,6 @@ const Index = () => {
                 result = { success: false, message: "Request failed." };
             }
 
-            setSessionStats(prev => ({ ...prev, [candidate.proxy]: { success: (prev[candidate.proxy]?.success || 0) + (result.success ? 1 : 0), fail: (prev[candidate.proxy]?.fail || 0) + (result.success ? 0 : 1) }}));
             setConnectionLog(prevLog => [{ ...result, proxy: candidate.proxy, timestamp: new Date().toLocaleTimeString() }, ...prevLog].slice(0, 50));
             
             if (result.success) {
@@ -450,7 +447,7 @@ const Index = () => {
         }
 
         setRemainingTime(switchInterval);
-        setSuccessfulRequests(0);
+        
         if (!isInitialStart) {
             notify("Proxy Switched", { body: `Now using: ${nextProxy.proxy}` });
         }
@@ -482,30 +479,22 @@ const Index = () => {
     };
   }, [switcherStatus, switchInterval, switchMode, switchProxy]);
 
-  useEffect(() => {
-      if (switcherStatus === 'running' && switchMode === 'requests' && rotationStrategy !== 'aggressive' && successfulRequests >= switchRequestCount) {
-          switchProxy();
-      }
-  }, [successfulRequests, switchRequestCount, switcherStatus, switchMode, rotationStrategy, switchProxy]);
-
   const handleRequestSuccess = () => {
-      if (activeProxy) {
+      if (activeProxyRef.current) {
+        const proxyKey = activeProxyRef.current.proxy;
         setSessionStats(prev => {
-            const stats = prev[activeProxy.proxy] ?? { success: 0, fail: 0 };
-            return { ...prev, [activeProxy.proxy]: { ...stats, success: stats.success + 1 } };
+            const stats = prev[proxyKey] ?? { success: 0, fail: 0 };
+            return { ...prev, [proxyKey]: { ...stats, success: stats.success + 1 } };
         });
-      }
-
-      if (switcherStatus === 'running' && switchMode === 'requests' && rotationStrategy !== 'aggressive') {
-          setSuccessfulRequests(prev => prev + 1);
       }
   };
 
   const handleRequestFailure = () => {
-      if (activeProxy) {
+      if (activeProxyRef.current) {
+        const proxyKey = activeProxyRef.current.proxy;
         setSessionStats(prev => {
-            const stats = prev[activeProxy.proxy] ?? { success: 0, fail: 0 };
-            return { ...prev, [activeProxy.proxy]: { ...stats, fail: stats.fail + 1 } };
+            const stats = prev[proxyKey] ?? { success: 0, fail: 0 };
+            return { ...prev, [proxyKey]: { ...stats, fail: stats.fail + 1 } };
         });
       }
 
@@ -523,20 +512,35 @@ const Index = () => {
       return;
     }
 
+    setConnectionLog([]);
+
     const newDownedProxies = new Map<string, number>();
     if (retestOnStart) {
         toast({ title: "Pre-testing all proxies..." });
+        const preTestLogs: ConnectionLogEntry[] = [];
         for (const proxy of proxiesToUse) {
+            let result: TestResult;
+            let logEntry: ConnectionLogEntry;
             try {
-                const response = await fetch('/api/test-connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxy: proxy.proxy }) });
-                const result = await response.json();
+                const response = await fetch('/api/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ proxy: proxy.proxy }),
+                });
+                result = await response.json();
                 if (!result.success) {
                     newDownedProxies.set(proxy.proxy, Date.now());
                 }
+                logEntry = { ...result, proxy: proxy.proxy, timestamp: new Date().toLocaleTimeString() };
             } catch (error) {
                 newDownedProxies.set(proxy.proxy, Date.now());
+                result = { success: false, message: "Request to backend failed during pre-test." };
+                logEntry = { ...result, proxy: proxy.proxy, timestamp: new Date().toLocaleTimeString() };
             }
+            preTestLogs.push(logEntry);
         }
+        setConnectionLog(preTestLogs.reverse());
+
         const onlineCount = proxiesToUse.length - newDownedProxies.size;
         if (onlineCount === 0) {
              toast({ title: "No proxies passed the pre-test", description: "All valid proxies failed the initial check. Please check your proxies or network.", variant: "destructive" });
@@ -548,7 +552,6 @@ const Index = () => {
     setDownedProxies(newDownedProxies);
     setManualRemovals(new Set());
     setInitialValidCount(proxiesToUse.length);
-    setConnectionLog([]);
     setSwitchCount(0);
     setSuccessfulRequests(0);
     setSessionStats({});
@@ -674,7 +677,10 @@ const Index = () => {
     isAutoFillRunningRef.current = true;
     setAutoFillProgress(0);
     setProcessedCount(0);
+    setSuccessfulRequests(0);
     toast({ title: "Auto-fill started", description: `Processing ${emails.length} emails.` });
+    
+    let requestsOnThisProxy = 0;
 
     for (let i = 0; i < emails.length; i++) {
       if (!isAutoFillRunningRef.current) {
@@ -689,7 +695,6 @@ const Index = () => {
         break;
       }
       
-      // *** FIX 3: Read the proxy from the ref inside the loop ***
       const currentProxyForRequest = autoFillMode === 'switcher' ? activeProxyRef.current?.proxy : null;
 
       if (autoFillMode === 'switcher' && !currentProxyForRequest) {
@@ -701,6 +706,7 @@ const Index = () => {
 
       setCurrentEmail(emails[i]);
       
+      let requestSucceeded = false;
       try {
         const response = await fetch('/api/auto-fill', {
           method: 'POST',
@@ -711,14 +717,31 @@ const Index = () => {
           const errorData = await response.json();
           throw new Error(errorData.message || 'Submission failed');
         }
+        requestSucceeded = true;
         toast({ title: "Submission Success", description: `Submitted for ${emails[i]}` });
-        if (autoFillMode === 'switcher') handleRequestSuccess();
+        if (autoFillMode === 'switcher') {
+            handleRequestSuccess();
+        }
       } catch (error: any) {
         toast({ title: "Submission Error", description: error.message, variant: "destructive" });
-        if (autoFillMode === 'switcher') handleRequestFailure();
+        if (autoFillMode === 'switcher') {
+            handleRequestFailure();
+        }
       }
+
       setProcessedCount(i + 1);
       setAutoFillProgress(((i + 1) / emails.length) * 100);
+      
+      if (requestSucceeded && autoFillMode === 'switcher' && switcherStatus === 'running' && switchMode === 'requests' && rotationStrategy !== 'aggressive') {
+        requestsOnThisProxy++;
+        setSuccessfulRequests(requestsOnThisProxy); 
+        if (requestsOnThisProxy >= switchRequestCount) {
+          await switchProxy();
+          requestsOnThisProxy = 0; 
+          setSuccessfulRequests(0); 
+        }
+      }
+
       if (i < emails.length - 1) {
         await sleep(delay * 1000);
       }
