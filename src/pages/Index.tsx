@@ -117,6 +117,8 @@ const Index = () => {
   const [selectedProfile, setSelectedProfile] = useState<string>("");
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [isSwitchingProxy, setIsSwitchingProxy] = useState(false);
+  // *** NEW *** State to track if the auto-filler started the switcher
+  const [switcherStartedByAutoFill, setSwitcherStartedByAutoFill] = useState(false);
 
   const isSwitchingRef = useRef(false);
   const isAutoFillRunningRef = useRef(isAutoFillRunning);
@@ -648,10 +650,16 @@ const Index = () => {
       toast({ title: "No emails to process", variant: "destructive" });
       return;
     }
-    if (autoFillMode === 'switcher' && !activeProxyRef.current) {
-      toast({ title: "No active proxy", description: "Please start the proxy switcher first.", variant: "destructive" });
-      return;
+    
+    // *** NEW *** Start the switcher if it's not running
+    if (autoFillMode === 'switcher' && switcherStatus === 'stopped') {
+      toast({ title: "Auto-starting Proxy Switcher..." });
+      handleStartSwitcher(); // This will trigger the switcher to find its first proxy
+      setSwitcherStartedByAutoFill(true);
+    } else {
+      setSwitcherStartedByAutoFill(false);
     }
+
     setIsAutoFillRunning(true);
     isAutoFillRunningRef.current = true;
     setAutoFillProgress(0);
@@ -664,12 +672,16 @@ const Index = () => {
       if (!isAutoFillRunningRef.current || index >= emails.length) {
         if (isAutoFillRunningRef.current) {
           toast({ title: "Auto-fill completed", description: `Finished processing all ${emails.length} emails` });
-        } else {
-           toast({ title: "Auto-fill stopped", description: `Processed ${index} emails.` });
         }
         setIsAutoFillRunning(false);
         isAutoFillRunningRef.current = false;
         setCurrentEmail("");
+
+        // *** NEW *** Stop the switcher on completion if we started it
+        if (switcherStartedByAutoFill) {
+          handleStopSwitcher();
+          setSwitcherStartedByAutoFill(false); // Reset the flag
+        }
         return;
       }
       if (autoFillMode === 'switcher' && switcherStatus !== 'running') {
@@ -685,9 +697,18 @@ const Index = () => {
 
       const currentProxyForRequest = autoFillMode === 'switcher' ? activeProxyRef.current?.proxy : null;
       if (autoFillMode === 'switcher' && !currentProxyForRequest) {
-        toast({ title: "Proxy became unavailable", description: "The active proxy is no longer available.", variant: "destructive" });
-        setIsAutoFillRunning(false);
-        isAutoFillRunningRef.current = false;
+        toast({ title: "Proxy became unavailable", description: "Waiting for a new proxy...", variant: "destructive" });
+        await sleep(2000); // Wait a moment for the switcher to find a new proxy
+        if(!activeProxyRef.current) {
+            setIsAutoFillRunning(false);
+            isAutoFillRunningRef.current = false;
+            if (switcherStartedByAutoFill) {
+                handleStopSwitcher();
+                setSwitcherStartedByAutoFill(false);
+            }
+            return;
+        }
+        processEmailAtIndex(index); // Retry the same email with the new proxy
         return;
       }
       setCurrentEmail(emails[index]);
@@ -746,13 +767,17 @@ const Index = () => {
           await sleep(delay * 1000);
           processEmailAtIndex(index + 1);
       } else {
-          processEmailAtIndex(index + 1);
+          processEmailAtIndex(index + 1); // Final call to trigger completion logic
       }
     };
     processEmailAtIndex(0);
   };
   
-  const handleStopAutoFill = () => { isAutoFillRunningRef.current = false; };
+  const handleStopAutoFill = () => {
+    isAutoFillRunningRef.current = false;
+    toast({ title: "Auto-fill stopping..." });
+    // The running loop will detect the ref change and trigger the completion logic
+  };
   
   useEffect(() => {
     try {

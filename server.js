@@ -261,32 +261,53 @@ app.post('/api/auto-fill', async (req, res) => {
       }
     }
     
+    let finalResponse = null;
     try {
       await page.waitForSelector(selectors.submitSelector, { timeout: 10000 });
-      await Promise.all([
-          page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }),
-          page.click(selectors.submitSelector)
+      const [navigationResult] = await Promise.allSettled([
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }),
+        page.click(selectors.submitSelector)
       ]);
+
+      if (navigationResult.status === 'fulfilled' && navigationResult.value) {
+        finalResponse = navigationResult.value;
+      } else {
+        console.log("Navigation did not happen after click, which is normal for modern AJAX forms.");
+      }
       
     } catch (error) {
-      // This is not a fatal error, as some forms submit without navigation.
-      // We will check for the keyword on the current page.
-      console.log(`Navigation did not happen after click, or it timed out. This might be expected.`);
+      throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
     }
 
+    // *** MODIFIED *** New variable to hold our dynamic success message.
+    let successMessage = `Successfully submitted form for ${email}.`;
+
     if (successKeyword) {
-      await sleep(1000); // Give a moment for any final scripts to run
+      await sleep(1000); 
       const pageContent = await page.content();
       const keywordFound = pageContent.includes(successKeyword) || networkResponseText.includes(successKeyword);
       
       if (!keywordFound) {
-        throw new Error(`Keyword "${successKeyword}" not found in UI or network response.`);
+        throw new Error(`Failure: Keyword "${successKeyword}" not found in page content.`);
+      }
+      // *** MODIFIED ***
+      successMessage += ` Validation: Found keyword "${successKeyword}".`;
+
+    } else {
+      if (finalResponse && !finalResponse.ok()) {
+        throw new Error(`Failure: Received bad HTTP status: ${finalResponse.status()} ${finalResponse.statusText()}`);
+      }
+      // *** MODIFIED ***
+      if (finalResponse) {
+        successMessage += ` Validation: Received status code ${finalResponse.status()}.`;
+      } else {
+        successMessage += ` Validation: Automation script completed (AJAX submission).`;
       }
     }
     
     res.json({
       success: true,
-      message: `Successfully submitted form for ${email}`,
+      message: successMessage, // *** MODIFIED *** Use the new dynamic message
       email: email,
       proxy: proxy || 'Direct Connection'
     });
@@ -295,7 +316,7 @@ app.post('/api/auto-fill', async (req, res) => {
     console.error(`Auto-fill error for ${email}:`, error.message);
     res.status(500).json({
       success: false,
-      message: error.message || 'Form submission failed',
+      message: error.message || 'Form submission failed', // Error messages are now more descriptive
       email: email,
       proxy: proxy || 'Direct Connection'
     });
