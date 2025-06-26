@@ -4,9 +4,10 @@ import { ProxySwitcher, RotationStrategy, SessionStat } from "@/components/Proxy
 import { AutoFillForm, FormSelectors } from "@/components/AutoFillForm";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { IpTester } from "@/components/IpTester";
+import { SessionSummaryDialog, SessionSummaryData } from "@/components/SessionSummaryDialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, RotateCcw, FormInput, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2 } from "lucide-react";
+import { Shield, RotateCcw, FormInput, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2, Hourglass, ListTodo, Timer as TimerIcon, X, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -45,6 +46,7 @@ export interface TestResult {
     location?: string;
     latency?: number;
     statusCode?: number;
+    sourceContent?: string;
 }
 
 export interface ConnectionLogEntry extends TestResult {
@@ -60,6 +62,11 @@ interface ProfileData {
     rotationStrategy: RotationStrategy;
     switchInterval: number;
     switchRequestCount: number;
+    emailData: string;
+    targetUrl: string;
+    delay: number;
+    selectors: FormSelectors;
+    successKeyword: string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,10 +75,17 @@ const PROFILES_KEY = 'proxy-guardian-profiles';
 const NOTIFICATIONS_KEY = 'proxy-guardian-notifications-enabled';
 const MAX_REASONABLE_LATENCY = 3000;
 
+const formatTime = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+};
+
 const Index = () => {
   const [validProxies, setValidProxies] = useState<ValidProxy[]>([]);
   const [activeProxy, setActiveProxy] = useState<ValidProxy | null>(null);
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [connectionLog, setConnectionLog] = useState<ConnectionLogEntry[]>([]);
   const [proxyInput, setProxyInput] = useState("");
   const [checkerResults, setCheckerResults] = useState<ValidProxy[]>([]);
@@ -117,8 +131,15 @@ const Index = () => {
   const [selectedProfile, setSelectedProfile] = useState<string>("");
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [isSwitchingProxy, setIsSwitchingProxy] = useState(false);
-  // *** NEW *** State to track if the auto-filler started the switcher
   const [switcherStartedByAutoFill, setSwitcherStartedByAutoFill] = useState(false);
+  
+  const [autoFillStartTime, setAutoFillStartTime] = useState<number | null>(null);
+  const [autoFillElapsedTime, setAutoFillElapsedTime] = useState('00:00:00');
+  const [autoFillETR, setAutoFillETR] = useState('Calculating...');
+  const [showAutoFillDashboard, setShowAutoFillDashboard] = useState(false);
+
+  const [sessionSummary, setSessionSummary] = useState<SessionSummaryData | null>(null);
+  const [isSummaryDialogOpen, setIsSummaryDialogOpen] = useState(false);
 
   const isSwitchingRef = useRef(false);
   const isAutoFillRunningRef = useRef(isAutoFillRunning);
@@ -129,6 +150,31 @@ const Index = () => {
   useEffect(() => { isAutoFillRunningRef.current = isAutoFillRunning }, [isAutoFillRunning]);
   useEffect(() => { activeProxyRef.current = activeProxy; }, [activeProxy]);
   useEffect(() => { isSwitchingProxyRef.current = isSwitchingProxy; }, [isSwitchingProxy]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (isAutoFillRunning && autoFillStartTime) {
+        interval = setInterval(() => {
+            const elapsed = Date.now() - autoFillStartTime;
+            setAutoFillElapsedTime(formatTime(elapsed));
+
+            if (processedCount > 1) {
+                const avgTimePerEmail = elapsed / processedCount;
+                const totalEmails = emailData.split('\n').map(line => line.trim()).filter(line => line.length > 0 && line.includes('@')).length;
+                const remainingEmails = totalEmails - processedCount;
+                const etrMs = remainingEmails * avgTimePerEmail;
+                setAutoFillETR(formatTime(etrMs));
+            } else {
+                setAutoFillETR('Calculating...');
+            }
+
+        }, 1000);
+    }
+    return () => {
+        if(interval) clearInterval(interval);
+    };
+  }, [isAutoFillRunning, autoFillStartTime, processedCount, emailData]);
+
 
   const notify = useCallback((title: string, options?: NotificationOptions) => {
     if (!notificationsEnabled || Notification.permission !== 'granted') return;
@@ -175,7 +221,18 @@ const Index = () => {
     const profileName = prompt("Enter a name for this profile:");
     if (!profileName) return;
 
-    const newProfileData: ProfileData = { proxyInput, switchMode, rotationStrategy, switchInterval, switchRequestCount };
+    const newProfileData: ProfileData = { 
+        proxyInput, 
+        switchMode, 
+        rotationStrategy, 
+        switchInterval, 
+        switchRequestCount,
+        emailData,
+        targetUrl,
+        delay,
+        selectors,
+        successKeyword
+    };
     const updatedProfiles = { ...profiles, [profileName]: newProfileData };
     setProfiles(updatedProfiles);
     localStorage.setItem(PROFILES_KEY, JSON.stringify(updatedProfiles));
@@ -192,6 +249,13 @@ const Index = () => {
     setRotationStrategy(profileData.rotationStrategy);
     setSwitchInterval(profileData.switchInterval);
     setSwitchRequestCount(profileData.switchRequestCount);
+    
+    setEmailData(profileData.emailData ?? "");
+    setTargetUrl(profileData.targetUrl ?? "");
+    setDelay(profileData.delay ?? 2);
+    setSelectors(profileData.selectors ?? { emailSelector: '', submitSelector: '' });
+    setSuccessKeyword(profileData.successKeyword ?? "");
+
     setSelectedProfile(profileName);
     toast({ title: "Profile Loaded", description: `Loaded profile "${profileName}".` });
   };
@@ -558,8 +622,34 @@ const Index = () => {
     } catch (error) {
       result = { success: false, message: "Request failed." };
     }
-    setTestResult(result);
-    setConnectionLog(prev => prev.map(l => l.id === logId ? { ...l, ...result, status: result.success ? 'success' : 'fail' } : l ));
+    setConnectionLog(prev => prev.map(l => l.id === logId ? { ...l, ...result, status: result.success ? 'success' : 'fail' } as ConnectionLogEntry : l ));
+  };
+
+  const handleTestCustomEndpoint = async (workerUrl: string) => {
+    const proxy = activeProxy?.proxy;
+    if (!proxy) { toast({ title: "No active proxy to test", variant: "destructive" }); return; }
+    const logId = genLogId();
+    const pendingLog: ConnectionLogEntry = {
+        id: logId,
+        proxy,
+        timestamp: new Date().toLocaleTimeString(),
+        success: false,
+        message: `Testing against ${workerUrl}...`,
+        status: 'pending'
+    };
+    setConnectionLog(prev => [pendingLog, ...prev].slice(0, 50));
+    let result: TestResult;
+    try {
+        const response = await fetch('/api/custom-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proxy, targetUrl: workerUrl })
+        });
+        result = await response.json();
+    } catch (error) {
+        result = { success: false, message: "Request failed to backend." };
+    }
+    setConnectionLog(prev => prev.map(l => l.id === logId ? { ...l, ...result, status: result.success ? 'success' : 'fail' } as ConnectionLogEntry : l ));
   };
 
   const handleReTestProxy = useCallback(async (proxyToTest: string) => {
@@ -643,6 +733,36 @@ const Index = () => {
       setIsSwitchingProxy(true);
     }
   }, [successfulRequests, isAutoFillRunning, switcherStatus, switchMode, switchRequestCount, rotationStrategy, isSwitchingProxy]);
+  
+  const handleClearAutoFillDashboard = () => {
+    setShowAutoFillDashboard(false);
+    setProcessedCount(0);
+    setAutoFillProgress(0);
+    setAutoFillStartTime(null);
+    setAutoFillElapsedTime('00:00:00');
+    setAutoFillETR('Calculating...');
+  };
+
+  const calculateAndShowSummary = () => {
+    const totalSuccess = Object.values(sessionStats).reduce((acc, stat) => acc + stat.success, 0);
+    const totalFail = Object.values(sessionStats).reduce((acc, stat) => acc + stat.fail, 0);
+    const totalProcessed = totalSuccess + totalFail;
+    const successRate = totalProcessed > 0 ? (totalSuccess / totalProcessed) * 100 : 0;
+
+    const sortedBySuccess = Object.entries(sessionStats).sort(([, a], [, b]) => b.success - a.success);
+    const sortedByFail = Object.entries(sessionStats).sort(([, a], [, b]) => b.fail - a.fail);
+
+    setSessionSummary({
+        totalRunTime: autoFillElapsedTime,
+        totalProcessed: processedCount,
+        totalSuccess,
+        totalFail,
+        successRate,
+        bestProxy: sortedBySuccess.length > 0 ? { name: sortedBySuccess[0][0], successes: sortedBySuccess[0][1].success } : null,
+        worstProxy: sortedByFail.length > 0 ? { name: sortedByFail[0][0], fails: sortedByFail[0][1].fail } : null,
+    });
+    setIsSummaryDialogOpen(true);
+  };
 
   const handleStartAutoFill = (selectors: FormSelectors) => {
     const emails = emailData.split('\n').map(line => line.trim()).filter(line => line.length > 0 && line.includes('@'));
@@ -651,10 +771,12 @@ const Index = () => {
       return;
     }
     
-    // *** NEW *** Start the switcher if it's not running
+    handleClearAutoFillDashboard();
+    setShowAutoFillDashboard(true);
+
     if (autoFillMode === 'switcher' && switcherStatus === 'stopped') {
       toast({ title: "Auto-starting Proxy Switcher..." });
-      handleStartSwitcher(); // This will trigger the switcher to find its first proxy
+      handleStartSwitcher(); 
       setSwitcherStartedByAutoFill(true);
     } else {
       setSwitcherStartedByAutoFill(false);
@@ -662,25 +784,23 @@ const Index = () => {
 
     setIsAutoFillRunning(true);
     isAutoFillRunningRef.current = true;
-    setAutoFillProgress(0);
-    setProcessedCount(0);
-    setSuccessfulRequests(0);
     setConnectionLog([]);
+    setAutoFillStartTime(Date.now());
     toast({ title: "Auto-fill started", description: `Processing ${emails.length} emails.` });
     
     const processEmailAtIndex = async (index: number) => {
       if (!isAutoFillRunningRef.current || index >= emails.length) {
         if (isAutoFillRunningRef.current) {
-          toast({ title: "Auto-fill completed", description: `Finished processing all ${emails.length} emails` });
+          toast({ title: "Auto-fill completed" });
+          calculateAndShowSummary();
         }
         setIsAutoFillRunning(false);
         isAutoFillRunningRef.current = false;
         setCurrentEmail("");
-
-        // *** NEW *** Stop the switcher on completion if we started it
+        
         if (switcherStartedByAutoFill) {
           handleStopSwitcher();
-          setSwitcherStartedByAutoFill(false); // Reset the flag
+          setSwitcherStartedByAutoFill(false); 
         }
         return;
       }
@@ -688,6 +808,7 @@ const Index = () => {
         toast({ title: "Auto-fill Paused", description: "Proxy switcher is not running.", variant: "destructive" });
         setIsAutoFillRunning(false);
         isAutoFillRunningRef.current = false;
+        calculateAndShowSummary();
         return;
       }
       
@@ -698,7 +819,7 @@ const Index = () => {
       const currentProxyForRequest = autoFillMode === 'switcher' ? activeProxyRef.current?.proxy : null;
       if (autoFillMode === 'switcher' && !currentProxyForRequest) {
         toast({ title: "Proxy became unavailable", description: "Waiting for a new proxy...", variant: "destructive" });
-        await sleep(2000); // Wait a moment for the switcher to find a new proxy
+        await sleep(2000); 
         if(!activeProxyRef.current) {
             setIsAutoFillRunning(false);
             isAutoFillRunningRef.current = false;
@@ -706,9 +827,10 @@ const Index = () => {
                 handleStopSwitcher();
                 setSwitcherStartedByAutoFill(false);
             }
+            calculateAndShowSummary();
             return;
         }
-        processEmailAtIndex(index); // Retry the same email with the new proxy
+        processEmailAtIndex(index); 
         return;
       }
       setCurrentEmail(emails[index]);
@@ -726,6 +848,7 @@ const Index = () => {
       
       let requestSucceeded = false;
       let finalMessage = '';
+      let sourceContent = null;
       
       try {
         const response = await fetch('/api/auto-fill', {
@@ -741,16 +864,27 @@ const Index = () => {
         });
         const result = await response.json();
         finalMessage = result.message || (response.ok ? 'Submission successful.' : 'Submission failed.');
+        sourceContent = result.sourceContent;
         if (!response.ok) {
-          throw new Error(finalMessage);
+          throw new Error(JSON.stringify(result));
         }
         requestSucceeded = true;
       } catch (error: any) {
-        finalMessage = error.message;
-        toast({ title: "Submission Error", description: error.message, variant: "destructive" });
+        let errorMessage = error.message;
+        try {
+            const errorResult = JSON.parse(error.message);
+            errorMessage = errorResult.message;
+            if(errorResult.sourceContent) {
+                sourceContent = errorResult.sourceContent;
+            }
+        } catch (e) {
+            // Not a JSON error, proceed
+        }
+        finalMessage = errorMessage;
+        toast({ title: "Submission Error", description: errorMessage, variant: "destructive" });
       }
 
-      setConnectionLog(prev => prev.map(l => l.id === logId ? { ...l, success: requestSucceeded, status: requestSucceeded ? 'success' : 'fail', message: finalMessage } : l));
+      setConnectionLog(prev => prev.map(l => l.id === logId ? { ...l, success: requestSucceeded, status: requestSucceeded ? 'success' : 'fail', message: finalMessage, sourceContent } : l));
       
       setProcessedCount(prev => prev + 1);
       setAutoFillProgress(((index + 1) / emails.length) * 100);
@@ -767,7 +901,7 @@ const Index = () => {
           await sleep(delay * 1000);
           processEmailAtIndex(index + 1);
       } else {
-          processEmailAtIndex(index + 1); // Final call to trigger completion logic
+          processEmailAtIndex(index + 1);
       }
     };
     processEmailAtIndex(0);
@@ -775,10 +909,17 @@ const Index = () => {
   
   const handleStopAutoFill = () => {
     isAutoFillRunningRef.current = false;
+    calculateAndShowSummary();
     toast({ title: "Auto-fill stopping..." });
-    // The running loop will detect the ref change and trigger the completion logic
   };
   
+  const handleClearConnectionLog = () => {
+    setConnectionLog([]);
+    toast({ title: "Connection log cleared" });
+  };
+  
+  const handleClearResults = () => { setCheckerResults(prev => prev.filter(r => r.isPinned)); toast({ title: "Cleared unpinned results." }); }
+
   useEffect(() => {
     try {
       const savedPinned = localStorage.getItem(PINNED_PROXIES_KEY);
@@ -824,6 +965,7 @@ const Index = () => {
   const handleCheckProxies = async (rateLimit: string, targetUrl: string, checkCount: number, provider: string, apiKey: string, contentCheckString: string) => {
     isCheckingRef.current = true; setIsChecking(true);
     if (!proxyInput.trim()) { toast({ title: "No proxies to check", variant: "destructive" }); setIsChecking(false); isCheckingRef.current = false; return; }
+    handleClearAutoFillDashboard();
     setProgress(0);
     const pinned = checkerResults.filter(r => r.isPinned);
     const pinnedStrings = pinned.map(p => p.proxy);
@@ -867,7 +1009,6 @@ const Index = () => {
   };
   
   const handleAbort = () => { isCheckingRef.current = false; setIsChecking(false); };
-  const handleClearResults = () => { setCheckerResults(prev => prev.filter(r => r.isPinned)); toast({ title: "Cleared unpinned results." }); }
 
   useEffect(() => {
     const BATCH_SIZE = 5;
@@ -890,6 +1031,8 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
+      <SessionSummaryDialog isOpen={isSummaryDialogOpen} onOpenChange={setIsSummaryDialogOpen} summary={sessionSummary} />
+
       <div className="container mx-auto max-w-7xl">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Proxy Guardian Automator</h1>
@@ -926,22 +1069,7 @@ const Index = () => {
                 </CardContent>
             </Card>
         </div>
-
-        {activeProxy && (
-          <Card className="mb-6 bg-green-900/20 border-green-500/30">
-            <CardContent className="py-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-green-400 font-medium">Active Proxy:</span>
-                  <span className="text-white">{activeProxy.proxy}</span>
-                  <span className="text-blue-400">({activeProxy.portType})</span>
-                </div>
-                <div className="text-sm text-gray-400">Valid Proxies: {validProxies.filter(p=>p.isValid).length}</div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        
         <Tabs defaultValue="checker" className="space-y-6">
           <TabsList className="grid w-full grid-cols-5 bg-slate-800/50 border border-slate-700">
             <TabsTrigger value="checker" className="flex items-center space-x-2 data-[state=active]:bg-blue-600"><Shield className="w-4 h-4" /><span>Proxy Checker</span></TabsTrigger>
@@ -951,6 +1079,30 @@ const Index = () => {
             <TabsTrigger value="analytics" className="flex items-center space-x-2 data-[state=active]:bg-orange-600"><PieChart className="w-4 h-4" /><span>Analytics</span></TabsTrigger>
           </TabsList>
           
+          {showAutoFillDashboard && (
+            <Card className="bg-slate-800/50 border-slate-700 relative">
+                <Button variant="ghost" size="icon" className="absolute top-2 right-2 h-6 w-6 text-gray-400 hover:text-white" onClick={handleClearAutoFillDashboard}>
+                    <X className="h-4 w-4" />
+                </Button>
+                <CardContent className="p-4">
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                        <div className="space-y-1">
+                            <CardDescription className="flex items-center justify-center gap-2"><ListTodo className="w-4 h-4"/><span>Progress</span></CardDescription>
+                            <p className="text-2xl font-bold text-white">{processedCount} / {emailData.split('\n').map(line => line.trim()).filter(line => line.length > 0 && line.includes('@')).length}</p>
+                        </div>
+                        <div className="space-y-1">
+                            <CardDescription className="flex items-center justify-center gap-2"><TimerIcon className="w-4 h-4"/><span>Time Elapsed</span></CardDescription>
+                            <p className="text-2xl font-bold text-white font-mono">{autoFillElapsedTime}</p>
+                        </div>
+                        <div className="space-y-1">
+                            <CardDescription className="flex items-center justify-center gap-2"><Hourglass className="w-4 h-4"/><span>{isAutoFillRunning ? 'Est. Time Remaining' : 'Total Time Taken'}</span></CardDescription>
+                            <p className="text-2xl font-bold text-white font-mono">{isAutoFillRunning ? autoFillETR : autoFillElapsedTime}</p>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+          )}
+
           <TabsContent value="checker" className="space-y-6">
             <ProxyChecker onProxiesValidated={handleProxiesValidated} proxyInput={proxyInput} onProxyInputChange={setProxyInput} results={checkerResults} isChecking={isChecking} progress={progress} onCheckProxies={handleCheckProxies} onAbort={handleAbort} onClearResults={handleClearResults} onRemoveResults={handleRemoveResults} onRecheckProxies={handleRecheckProxies} onSetPinned={handleSetPinned}/>
           </TabsContent>
@@ -961,8 +1113,9 @@ const Index = () => {
                 onReTestProxy={handleReTestProxy}
                 onTempRemove={handleTempRemove}
                 onReenableProxy={handleReenableProxy}
-                testResult={testResult} 
-                connectionLog={connectionLog} 
+                testResult={null} 
+                connectionLog={connectionLog}
+                onClearLog={handleClearConnectionLog}
                 sessionStats={sessionStats} 
                 switcherStatus={switcherStatus} 
                 switchInterval={switchInterval} 
@@ -1024,7 +1177,7 @@ const Index = () => {
             />
           </TabsContent>
           <TabsContent value="ip-tester" className="space-y-6">
-            <IpTester activeProxy={activeProxy} />
+            <IpTester activeProxy={activeProxy} onTestEndpoint={handleTestCustomEndpoint} />
            </TabsContent>
            <TabsContent value="analytics" className="space-y-6">
             <AnalyticsDashboard validProxies={validProxies} sessionStats={sessionStats} connectionLog={connectionLog} />

@@ -1,23 +1,26 @@
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react"; // <-- Import useMemo
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // <-- Import Tabs components
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { CooldownTimer } from "@/components/CooldownTimer";
-import { AlertTriangle, Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown, Filter, RefreshCw, Loader, Ban, PauseCircle, Undo2 } from "lucide-react";
+import { AlertTriangle, Play, Pause, RotateCcw, Timer, Wifi, WifiOff, Zap, CheckCircle, XCircle, ListChecks, Power, ArrowUp, ShieldX, Repeat, Clock, ArrowDownUp, HeartPulse, MapPin, ThumbsUp, ThumbsDown, Filter, RefreshCw, Loader, Ban, PauseCircle, Undo2, Trash2 } from "lucide-react";
 import { ValidProxy, TestResult, ConnectionLogEntry } from "@/pages/Index";
 import { toast } from "sonner";
 
 type SwitchMode = 'time' | 'requests';
 type FilterMode = 'whitelist' | 'blacklist';
+type LogFilter = 'all' | 'success' | 'fail'; // <-- New type for log filter
 
 export type RotationStrategy = 'sequential' | 'random' | 'health-based' | 'latency-based' | 'aggressive' | 'prioritize-pinned' | 'adaptive';
 
@@ -34,6 +37,7 @@ interface ProxySwitcherProps {
   onReenableProxy: (proxy: string) => void;
   testResult: TestResult | null;
   connectionLog: ConnectionLogEntry[];
+  onClearLog: () => void;
   sessionStats: Record<string, SessionStat>;
   switcherStatus: 'stopped' | 'running' | 'paused';
   switchInterval: number;
@@ -79,6 +83,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
     onTempRemove,
     onReenableProxy,
     connectionLog,
+    onClearLog,
     sessionStats,
     switcherStatus,
     switchInterval,
@@ -118,6 +123,19 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
 
   const [testingProxy, setTestingProxy] = useState<string | null>(null);
   const [selectedLog, setSelectedLog] = useState<ConnectionLogEntry | null>(null);
+  const [logFilter, setLogFilter] = useState<LogFilter>('all'); // <-- State for the active filter
+
+  // Filter logs based on the current filter state
+  const filteredLogs = useMemo(() => {
+    if (logFilter === 'success') {
+      return connectionLog.filter(log => log.status === 'success');
+    }
+    if (logFilter === 'fail') {
+      return connectionLog.filter(log => log.status === 'fail');
+    }
+    return connectionLog; // 'all'
+  }, [connectionLog, logFilter]);
+
 
   const allValidProxies = validProxies.filter(p => p.isValid);
 
@@ -344,14 +362,34 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                         <CardTitle className="flex items-center space-x-2 text-white"><ListChecks className="w-5 h-5 text-yellow-400" /><span>Connection Log</span></CardTitle>
                         <CardDescription className="text-gray-400">Status of recent connections. Click an entry for details.</CardDescription>
                     </div>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onClearLog}
+                        disabled={connectionLog.length === 0}
+                        className="bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700"
+                    >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Clear
+                    </Button>
                 </div>
             </CardHeader>
-            <CardContent>
-                {connectionLog.length === 0 ? (
-                    <div className="text-center py-6 text-gray-500"><p>No connection history yet.</p></div>
+            <CardContent className="space-y-3">
+                 {/* START: TABS ADDED HERE */}
+                <Tabs value={logFilter} onValueChange={(value) => setLogFilter(value as LogFilter)} className="w-full">
+                    <TabsList className="grid w-full grid-cols-3 h-9">
+                        <TabsTrigger value="all">All ({connectionLog.length})</TabsTrigger>
+                        <TabsTrigger value="success" className="data-[state=active]:bg-green-600/80">Success ({connectionLog.filter(l => l.status === 'success').length})</TabsTrigger>
+                        <TabsTrigger value="fail" className="data-[state=active]:bg-red-600/80">Fail ({connectionLog.filter(l => l.status === 'fail').length})</TabsTrigger>
+                    </TabsList>
+                </Tabs>
+                 {/* END: TABS ADDED HERE */}
+
+                {filteredLogs.length === 0 ? (
+                    <div className="text-center py-6 text-gray-500"><p>No connection history for this filter.</p></div>
                 ) : (
                     <div className="space-y-2 max-h-[240px] overflow-y-auto pr-2">
-                        {connectionLog.map((log, index) => {
+                        {filteredLogs.map((log) => {
                           let statusClass = '';
                           let StatusIcon = <Loader className="w-4 h-4 animate-spin text-blue-400" />;
 
@@ -538,7 +576,7 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
         </Card>
         
         <Dialog open={selectedLog !== null} onOpenChange={(isOpen) => !isOpen && setSelectedLog(null)}>
-            <DialogContent className="bg-slate-800 text-white border-slate-700">
+            <DialogContent className="bg-slate-800 text-white border-slate-700 max-w-2xl">
                 <DialogHeader>
                 <DialogTitle>Log Entry Details</DialogTitle>
                 <DialogDescription>
@@ -561,6 +599,16 @@ export const ProxySwitcher = (props: ProxySwitcherProps) => {
                         )}
                         <p><strong className="text-slate-400">Details:</strong></p>
                         <pre className="p-2 bg-slate-900 rounded-md text-slate-300 text-xs whitespace-pre-wrap">{selectedLog.message}</pre>
+                        {selectedLog.sourceContent && (
+                            <div className="space-y-1 pt-2">
+                                <Label className="text-slate-400">Response Source:</Label>
+                                <div className="p-2 bg-slate-900 rounded-md max-h-60 overflow-auto">
+                                    <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
+                                        {selectedLog.sourceContent}
+                                    </pre>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
             </DialogContent>

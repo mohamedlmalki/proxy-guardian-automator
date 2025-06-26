@@ -279,25 +279,27 @@ app.post('/api/auto-fill', async (req, res) => {
       throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
     }
 
-    // *** MODIFIED *** New variable to hold our dynamic success message.
     let successMessage = `Successfully submitted form for ${email}.`;
+    let sourceContent = null;
 
     if (successKeyword) {
       await sleep(1000); 
       const pageContent = await page.content();
-      const keywordFound = pageContent.includes(successKeyword) || networkResponseText.includes(successKeyword);
+      const keywordFoundInPage = pageContent.includes(successKeyword);
+      const keywordFoundInNetwork = networkResponseText.includes(successKeyword);
       
-      if (!keywordFound) {
-        throw new Error(`Failure: Keyword "${successKeyword}" not found in page content.`);
+      if (!keywordFoundInPage && !keywordFoundInNetwork) {
+        throw new Error(`Failure: Keyword "${successKeyword}" not found in page content or network responses.`);
       }
-      // *** MODIFIED ***
+      
       successMessage += ` Validation: Found keyword "${successKeyword}".`;
+      sourceContent = keywordFoundInPage ? pageContent : networkResponseText;
 
     } else {
       if (finalResponse && !finalResponse.ok()) {
         throw new Error(`Failure: Received bad HTTP status: ${finalResponse.status()} ${finalResponse.statusText()}`);
       }
-      // *** MODIFIED ***
+      
       if (finalResponse) {
         successMessage += ` Validation: Received status code ${finalResponse.status()}.`;
       } else {
@@ -307,19 +309,35 @@ app.post('/api/auto-fill', async (req, res) => {
     
     res.json({
       success: true,
-      message: successMessage, // *** MODIFIED *** Use the new dynamic message
+      message: successMessage,
+      sourceContent: sourceContent,
       email: email,
       proxy: proxy || 'Direct Connection'
     });
     
   } catch (error) {
     console.error(`Auto-fill error for ${email}:`, error.message);
+    
+    let errorSourceContent = null;
+    if (browser) {
+      try {
+        const pages = await browser.pages();
+        if (pages.length > 0) {
+            errorSourceContent = await pages[pages.length - 1].content();
+        }
+      } catch (contentError) {
+        console.error("Could not get page content on error:", contentError.message);
+      }
+    }
+    
     res.status(500).json({
       success: false,
-      message: error.message || 'Form submission failed', // Error messages are now more descriptive
+      message: error.message || 'Form submission failed',
+      sourceContent: errorSourceContent,
       email: email,
       proxy: proxy || 'Direct Connection'
     });
+
   } finally {
     if (browser) {
       await browser.close();
@@ -327,6 +345,7 @@ app.post('/api/auto-fill', async (req, res) => {
   }
 });
 
+// *** ENTIRE ENDPOINT MODIFIED FOR BETTER ERROR HANDLING & RESPONSE CAPTURING ***
 app.post('/api/custom-test', async (req, res) => {
   const { proxy, targetUrl } = req.body;
 
@@ -359,26 +378,55 @@ app.post('/api/custom-test', async (req, res) => {
     browser = await puppeteer.launch({ headless: true, args: browserArgs });
     const page = await browser.newPage();
     const response = await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+    const latency = Date.now() - startTime;
     
-    if (!response || !response.ok()) {
-        throw new Error(`Request failed with status: ${response?.status()}`);
+    if (!response) {
+        throw new Error('No response received from the target URL.');
     }
 
-    const responseBody = await response.json();
-    const latency = Date.now() - startTime;
+    const responseBodyText = await response.text();
+    let responseBodyJson = null;
+
+    try {
+      responseBodyJson = JSON.parse(responseBodyText);
+    } catch (e) {
+      // It's not JSON, which is fine. We'll send the raw text.
+      console.log('Response is not valid JSON, returning as text.');
+    }
+
+    if (!response.ok()) {
+        return res.status(response.status()).json({ 
+            success: false, 
+            message: `Request failed with status: ${response.status()}`,
+            sourceContent: responseBodyText
+        });
+    }
 
     res.json({
       success: true,
       message: `Successfully received response from your endpoint.`,
       status: response.status(),
       latency: latency,
-      data: responseBody,
+      data: responseBodyJson,
+      sourceContent: responseBodyText,
     });
   } catch (error) {
     console.error(`Custom test for ${proxy} to ${targetUrl} failed:`, error.message);
+    let errorSourceContent = null;
+    if (browser) {
+      try {
+        const pages = await browser.pages();
+        if (pages.length > 0) {
+            errorSourceContent = await pages[pages.length - 1].content();
+        }
+      } catch (contentError) {
+        // Ignore if we can't get content
+      }
+    }
     res.status(500).json({ 
         success: false, 
         message: error.message,
+        sourceContent: errorSourceContent
     });
   } finally {
     if (browser) {
