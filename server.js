@@ -13,6 +13,19 @@ app.use(cors());
 app.use(express.json());
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+const randomSleep = (min, max) => new Promise(res => setTimeout(res, Math.floor(Math.random() * (max - min + 1) + min)));
+
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0'
+];
+
+const generateRandomName = () => {
+    const firstNames = ['John', 'Jane', 'Alex', 'Chris', 'Pat', 'Michael', 'Sarah', 'David', 'Emily'];
+    const lastNames = ['Doe', 'Smith', 'Jones', 'Williams', 'Brown', 'Davis', 'Miller', 'Wilson'];
+    return `${firstNames[Math.floor(Math.random() * firstNames.length)]} ${lastNames[Math.floor(Math.random() * lastNames.length)]}`;
+};
 
 const getTypeFromPort = (proxyString) => {
   try {
@@ -38,9 +51,9 @@ const getErrorMessage = (error) => {
 };
 
 app.post('/api/check-proxy', async (req, res) => {
-    const { proxy, checkCount = 1, expectedString, provider, targetUrl } = req.body; 
+    const { proxy, checkCount = 1, expectedString, provider, targetUrl } = req.body;
     if (!proxy) { return res.status(400).json({ isValid: false, error: 'Invalid proxy format' }); }
-    
+
     let agent;
     const proxyType = getTypeFromPort(proxy);
     if (proxyType === 'SOCKS4' || proxyType === 'SOCKS5') {
@@ -59,13 +72,13 @@ app.post('/api/check-proxy', async (req, res) => {
             const startTime = Date.now();
             const checkResponse = await axios.get(anonymityCheckUrl, { httpAgent: agent, httpsAgent: agent, timeout: 10000 });
             totalLatency += Date.now() - startTime;
-            
+
             if (expectedString && typeof checkResponse.data === 'string' && !checkResponse.data.includes(expectedString)) {
               throw new Error('Content validation failed: expected string not found.');
             }
 
             successes++;
-            
+
             if (i === 0) {
               const headers = checkResponse.data.headers;
               if (!headers['X-Forwarded-For'] && !headers['Via']) { anonymity = 'Elite'; }
@@ -109,7 +122,7 @@ app.post('/api/check-proxy', async (req, res) => {
                 };
             }
         }
-        
+
         res.json({
             proxy, isValid: true, latency: averageLatency, healthScore, anonymity, portType: getTypeFromPort(proxy),
             ...finalGeoData
@@ -173,21 +186,21 @@ app.post('/api/test-connection', async (req, res) => {
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     console.error(`Test connection for ${proxy} failed:`, errorMessage);
-    res.status(500).json({ 
-        success: false, 
+    res.status(500).json({
+        success: false,
         message: errorMessage,
-        statusCode: error.response?.status 
+        statusCode: error.response?.status
     });
   }
 });
 
 app.post('/api/auto-fill', async (req, res) => {
-  const { email, targetUrl, proxy, selectors, successKeyword } = req.body;
-  
+  const { email, targetUrl, proxy, selectors, successKeyword, antiDetect, sessionCookies } = req.body;
+
   if (!email || !targetUrl || !selectors) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Missing required parameters: email, targetUrl, or selectors' 
+    return res.status(400).json({
+      success: false,
+      message: 'Missing required parameters: email, targetUrl, or selectors'
     });
   }
 
@@ -202,7 +215,7 @@ app.post('/api/auto-fill', async (req, res) => {
       '--no-zygote',
       '--disable-gpu'
     ];
-    
+
     if (proxy) {
         const proxyType = getTypeFromPort(proxy);
         if (proxyType === 'HTTP' || proxyType === 'HTTPS') {
@@ -215,75 +228,90 @@ app.post('/api/auto-fill', async (req, res) => {
     }
 
     browser = await puppeteer.launch({
-      headless: true,
+      headless: !(antiDetect && antiDetect.showBrowser),
       args: browserArgs
     });
 
     const page = await browser.newPage();
-    
+
+    if (antiDetect && antiDetect.persistentSession && sessionCookies && sessionCookies.length > 0) {
+        await page.setCookie(...sessionCookies);
+    }
+
+    if (antiDetect && antiDetect.disguiseFingerprint) {
+      const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+      await page.setUserAgent(userAgent);
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+    } else {
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+    }
+
     let networkResponseText = '';
     page.on('response', async (response) => {
         try {
             const text = await response.text();
             networkResponseText += text + '\n';
         } catch (e) {
-            // Ignore errors for responses that have no body
+            // Ignore errors
         }
     });
-    
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-    
-    await sleep(2000); 
-    
+
+    if (antiDetect && antiDetect.randomizeTimings) {
+        await randomSleep(1500, 3000);
+    } else {
+        await sleep(2000);
+    }
+
+    const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * 100 + 50) : 0;
+
     try {
       await page.waitForSelector(selectors.emailSelector, { timeout: 10000 });
-      await page.type(selectors.emailSelector, email);
+      await page.type(selectors.emailSelector, email, { delay: typingDelay });
     } catch (error) {
       throw new Error(`Could not find email field with selector: ${selectors.emailSelector}`);
     }
-    
+
     if (selectors.nameSelector) {
       try {
         await page.waitForSelector(selectors.nameSelector, { timeout: 5000 });
-        await page.type(selectors.nameSelector, 'John Doe');
+        await page.type(selectors.nameSelector, generateRandomName(), { delay: typingDelay });
       } catch (error) {
         console.log('Name field not found or not required');
       }
     }
-    
+
     if (selectors.phoneSelector) {
       try {
         await page.waitForSelector(selectors.phoneSelector, { timeout: 5000 });
-        await page.type(selectors.phoneSelector, '+1234567890');
+        await page.type(selectors.phoneSelector, '+1234567890', { delay: typingDelay });
       } catch (error) {
         console.log('Phone field not found or not required');
       }
     }
     
-    let finalResponse = null;
     try {
-      await page.waitForSelector(selectors.submitSelector, { timeout: 10000 });
-      const [navigationResult] = await Promise.allSettled([
-        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }),
-        page.click(selectors.submitSelector)
-      ]);
+        await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
 
-      if (navigationResult.status === 'fulfilled' && navigationResult.value) {
-        finalResponse = navigationResult.value;
-      } else {
-        console.log("Navigation did not happen after click, which is normal for modern AJAX forms.");
-      }
-      
-    } catch (error) {
-      throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
+        await Promise.all([
+            page.click(selectors.submitSelector),
+            page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => console.log('No navigation after click, continuing...'))
+        ]);
+
+    } catch(error) {
+        throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
     }
-
+    
     let successMessage = `Successfully submitted form for ${email}.`;
     let sourceContent = null;
+    let newCookies = [];
+
+    if (antiDetect && antiDetect.persistentSession) {
+        newCookies = await page.cookies();
+    }
 
     if (successKeyword) {
-      await sleep(1000); 
       const pageContent = await page.content();
       const keywordFoundInPage = pageContent.includes(successKeyword);
       const keywordFoundInNetwork = networkResponseText.includes(successKeyword);
@@ -296,15 +324,7 @@ app.post('/api/auto-fill', async (req, res) => {
       sourceContent = keywordFoundInPage ? pageContent : networkResponseText;
 
     } else {
-      if (finalResponse && !finalResponse.ok()) {
-        throw new Error(`Failure: Received bad HTTP status: ${finalResponse.status()} ${finalResponse.statusText()}`);
-      }
-      
-      if (finalResponse) {
-        successMessage += ` Validation: Received status code ${finalResponse.status()}.`;
-      } else {
-        successMessage += ` Validation: Automation script completed (AJAX submission).`;
-      }
+        successMessage += ` Validation: Automation script completed.`;
     }
     
     res.json({
@@ -312,7 +332,8 @@ app.post('/api/auto-fill', async (req, res) => {
       message: successMessage,
       sourceContent: sourceContent,
       email: email,
-      proxy: proxy || 'Direct Connection'
+      proxy: proxy || 'Direct Connection',
+      sessionCookies: newCookies
     });
     
   } catch (error) {
@@ -345,7 +366,6 @@ app.post('/api/auto-fill', async (req, res) => {
   }
 });
 
-// *** ENTIRE ENDPOINT MODIFIED FOR BETTER ERROR HANDLING & RESPONSE CAPTURING ***
 app.post('/api/custom-test', async (req, res) => {
   const { proxy, targetUrl } = req.body;
 
@@ -390,13 +410,12 @@ app.post('/api/custom-test', async (req, res) => {
     try {
       responseBodyJson = JSON.parse(responseBodyText);
     } catch (e) {
-      // It's not JSON, which is fine. We'll send the raw text.
       console.log('Response is not valid JSON, returning as text.');
     }
 
     if (!response.ok()) {
-        return res.status(response.status()).json({ 
-            success: false, 
+        return res.status(response.status()).json({
+            success: false,
             message: `Request failed with status: ${response.status()}`,
             sourceContent: responseBodyText
         });
@@ -423,8 +442,8 @@ app.post('/api/custom-test', async (req, res) => {
         // Ignore if we can't get content
       }
     }
-    res.status(500).json({ 
-        success: false, 
+    res.status(500).json({
+        success: false,
         message: error.message,
         sourceContent: errorSourceContent
     });
