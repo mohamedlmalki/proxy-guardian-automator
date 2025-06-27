@@ -37,6 +37,12 @@ export interface ValidProxy {
   lastChecked?: number;
 }
 
+export interface SessionData {
+  cookies: any[];
+  localStorage: Record<string, string>;
+  sessionStorage: Record<string, string>;
+}
+
 export interface TestResult {
     success: boolean;
     message: string;
@@ -47,7 +53,7 @@ export interface TestResult {
     latency?: number;
     statusCode?: number;
     sourceContent?: string;
-    sessionCookies?: any[];
+    sessionData?: SessionData;
 }
 
 export interface ConnectionLogEntry extends TestResult {
@@ -153,7 +159,7 @@ const Index = () => {
     persistentSession: false
   });
 
-  const [sessionCookies, setSessionCookies] = useState<any[]>([]);
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
 
   useEffect(() => {
     if (isAutoFillComplete) {
@@ -796,7 +802,7 @@ const Index = () => {
 
     handleClearAutoFillDashboard();
     setShowAutoFillDashboard(true);
-    setSessionCookies([]);
+    setSessionData(null);
 
     if (autoFillMode === 'switcher' && switcherStatus === 'stopped') {
       toast({ title: "Auto-starting Proxy Switcher..." });
@@ -886,15 +892,15 @@ const Index = () => {
             selectors,
             successKeyword,
             antiDetect,
-            sessionCookies
+            sessionData
           }),
         });
         const result = await response.json();
         finalMessage = result.message || (response.ok ? 'Submission successful.' : 'Submission failed.');
         sourceContent = result.sourceContent;
 
-        if (result.sessionCookies) {
-            setSessionCookies(result.sessionCookies);
+        if (result.sessionData) {
+            setSessionData(result.sessionData);
         }
 
         if (!response.ok) {
@@ -1155,18 +1161,6 @@ const Index = () => {
                 setSwitchInterval={setSwitchInterval}
                 remainingTime={remainingTime}
                 switchCount={switchCount}
-                onStart={handleStartSwitcher}
-                onStop={handleStopSwitcher}
-                onPause={handlePauseSwitcher}
-                onResume={handleResumeSwitcher}
-                onManualSwitch={handleManualSwitch}
-                onSendToTop={handleSendToTop}
-                onResetDowned={handleResetDowned}
-                currentProxyIndex={currentProxyIndex}
-                downedProxies={downedProxies}
-                manualRemovals={manualRemovals}
-                switchMode={switchMode}
-                setSwitchMode={setSwitchMode}
                 successfulRequests={successfulRequests}
                 switchRequestCount={switchRequestCount}
                 setSwitchRequestCount={setSwitchRequestCount}
@@ -1182,8 +1176,20 @@ const Index = () => {
                 setCountryFilterList={setCountryFilterList}
                 ispFilterList={ispFilterList}
                 setIspFilterList={setIspFilterList}
+                switchMode={switchMode}
+                setSwitchMode={setSwitchMode}
                 rotationStrategy={rotationStrategy}
                 setRotationStrategy={setRotationStrategy}
+                onStart={handleStartSwitcher}
+                onStop={handleStopSwitcher}
+                onPause={handlePauseSwitcher}
+                onResume={handleResumeSwitcher}
+                onManualSwitch={handleManualSwitch}
+                onSendToTop={handleSendToTop}
+                onResetDowned={handleResetDowned}
+                currentProxyIndex={currentProxyIndex}
+                downedProxies={downedProxies}
+                manualRemovals={manualRemovals}
             />
           </TabsContent>
           <TabsContent value="autofill" className="space-y-6">
@@ -1209,6 +1215,8 @@ const Index = () => {
                 setSuccessKeyword={setSuccessKeyword}
                 antiDetect={antiDetect}
                 setAntiDetect={setAntiDetect}
+                sessionData={sessionData}
+                setSessionData={setSessionData}
             />
           </TabsContent>
           <TabsContent value="ip-tester" className="space-y-6">

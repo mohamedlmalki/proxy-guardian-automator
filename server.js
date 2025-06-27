@@ -15,6 +15,22 @@ app.use(express.json());
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const randomSleep = (min, max) => new Promise(res => setTimeout(res, Math.floor(Math.random() * (max - min + 1) + min)));
 
+// Helper function for realistic mouse movement
+const moveMouseLikeHuman = async (page, element) => {
+    const box = await element.boundingBox();
+    if (!box) {
+        return;
+    }
+    // Start from a more random position to make the movement obvious
+    const startX = Math.floor(Math.random() * 100) + 50;
+    const startY = Math.floor(Math.random() * 100) + 50;
+    await page.mouse.move(startX, startY, { steps: 5 });
+    await sleep(100); // Small pause
+    // Move to the element with more steps to slow it down
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 20 });
+    await sleep(200); // Pause on the element before the click
+};
+
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
@@ -195,7 +211,8 @@ app.post('/api/test-connection', async (req, res) => {
 });
 
 app.post('/api/auto-fill', async (req, res) => {
-  const { email, targetUrl, proxy, selectors, successKeyword, antiDetect, sessionCookies } = req.body;
+  const { email, targetUrl, proxy, selectors, successKeyword, antiDetect, sessionData } = req.body;
+  console.log("Received Anti-Detect Settings:", antiDetect);
 
   if (!email || !targetUrl || !selectors) {
     return res.status(400).json({
@@ -213,7 +230,8 @@ app.post('/api/auto-fill', async (req, res) => {
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--window-position=0,0'
     ];
 
     if (proxy) {
@@ -234,8 +252,24 @@ app.post('/api/auto-fill', async (req, res) => {
 
     const page = await browser.newPage();
 
-    if (antiDetect && antiDetect.persistentSession && sessionCookies && sessionCookies.length > 0) {
-        await page.setCookie(...sessionCookies);
+    if (antiDetect && antiDetect.persistentSession && sessionData) {
+        if (sessionData.cookies) {
+            await page.setCookie(...sessionData.cookies);
+        }
+        if (sessionData.localStorage) {
+            await page.evaluate(data => {
+                for (const key in data) {
+                    localStorage.setItem(key, data[key]);
+                }
+            }, sessionData.localStorage);
+        }
+        if (sessionData.sessionStorage) {
+            await page.evaluate(data => {
+                for (const key in data) {
+                    sessionStorage.setItem(key, data[key]);
+                }
+            }, sessionData.sessionStorage);
+        }
     }
 
     if (antiDetect && antiDetect.disguiseFingerprint) {
@@ -264,12 +298,11 @@ app.post('/api/auto-fill', async (req, res) => {
             console.log(`Waiting for cookie banner button with selector: ${selectors.cookieSelector}`);
             const cookieButton = await page.waitForSelector(selectors.cookieSelector, { visible: true, timeout: 7000 });
             if (antiDetect.simulateMouse && cookieButton) {
-                await cookieButton.hover();
-                await sleep(500);
+                await moveMouseLikeHuman(page, cookieButton);
             }
             await page.click(selectors.cookieSelector);
             console.log('Successfully clicked the cookie consent button.');
-            await sleep(1000); 
+            await sleep(1000);
         } catch (e) {
             console.log(`Cookie consent button with selector "${selectors.cookieSelector}" not found or not clickable. Continuing...`);
         }
@@ -285,7 +318,9 @@ app.post('/api/auto-fill', async (req, res) => {
 
     try {
       const emailInput = await page.waitForSelector(selectors.emailSelector, { timeout: 10000 });
-      if (antiDetect.simulateMouse && emailInput) { await emailInput.hover(); await sleep(500); }
+      if (antiDetect.simulateMouse && emailInput) {
+        await moveMouseLikeHuman(page, emailInput);
+      }
       await page.type(selectors.emailSelector, email, { delay: typingDelay });
     } catch (error) {
       throw new Error(`Could not find email field with selector: ${selectors.emailSelector}`);
@@ -294,7 +329,9 @@ app.post('/api/auto-fill', async (req, res) => {
     if (selectors.nameSelector) {
       try {
         const nameInput = await page.waitForSelector(selectors.nameSelector, { timeout: 5000 });
-        if(antiDetect.simulateMouse && nameInput) { await nameInput.hover(); await sleep(500); }
+        if(antiDetect.simulateMouse && nameInput) {
+            await moveMouseLikeHuman(page, nameInput);
+        }
         await page.type(selectors.nameSelector, generateRandomName(), { delay: typingDelay });
       } catch (error) {
         console.log('Name field not found or not required');
@@ -304,7 +341,9 @@ app.post('/api/auto-fill', async (req, res) => {
     if (selectors.phoneSelector) {
       try {
         const phoneInput = await page.waitForSelector(selectors.phoneSelector, { timeout: 5000 });
-        if(antiDetect.simulateMouse && phoneInput) { await phoneInput.hover(); await sleep(500); }
+        if(antiDetect.simulateMouse && phoneInput) {
+            await moveMouseLikeHuman(page, phoneInput);
+        }
         await page.type(selectors.phoneSelector, '+1234567890', { delay: typingDelay });
       } catch (error) {
         console.log('Phone field not found or not required');
@@ -313,7 +352,9 @@ app.post('/api/auto-fill', async (req, res) => {
     
     try {
         const submitButton = await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
-        if(antiDetect.simulateMouse && submitButton) { await submitButton.hover(); await sleep(500); }
+        if(antiDetect.simulateMouse && submitButton) {
+            await moveMouseLikeHuman(page, submitButton);
+        }
         await Promise.all([
             page.click(selectors.submitSelector),
             page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => console.log('No navigation after click, continuing...'))
@@ -325,10 +366,31 @@ app.post('/api/auto-fill', async (req, res) => {
     
     let successMessage = `Successfully submitted form for ${email}.`;
     let sourceContent = null;
-    let newCookies = [];
+    let newSessionData = {};
 
     if (antiDetect && antiDetect.persistentSession) {
-        newCookies = await page.cookies();
+        const cookies = await page.cookies();
+        const localStorageData = await page.evaluate(() => {
+            let json = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                json[key] = localStorage.getItem(key);
+            }
+            return json;
+        });
+        const sessionStorageData = await page.evaluate(() => {
+            let json = {};
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                json[key] = sessionStorage.getItem(key);
+            }
+            return json;
+        });
+        newSessionData = {
+            cookies,
+            localStorage: localStorageData,
+            sessionStorage: sessionStorageData
+        };
     }
 
     if (successKeyword) {
@@ -353,7 +415,7 @@ app.post('/api/auto-fill', async (req, res) => {
       sourceContent: sourceContent,
       email: email,
       proxy: proxy || 'Direct Connection',
-      sessionCookies: newCookies
+      sessionData: newSessionData
     });
     
   } catch (error) {

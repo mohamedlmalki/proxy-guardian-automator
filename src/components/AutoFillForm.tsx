@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FormInput, Play, Pause, Mail, Globe, AlertTriangle, GitBranch, Share2, Server, Key, Shield, HardDrive, Cookie } from "lucide-react"; // Added Cookie icon
-import { ValidProxy } from "@/pages/Index";
+import { FormInput, Play, Pause, Mail, Globe, AlertTriangle, GitBranch, Share2, Server, Key, Shield, HardDrive, Cookie, Trash2 } from "lucide-react";
+import { ValidProxy, SessionData } from "@/pages/Index";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { Switch } from "./ui/switch";
 
@@ -16,7 +16,7 @@ export interface FormSelectors {
   submitSelector: string;
   nameSelector?: string;
   phoneSelector?: string;
-  cookieSelector?: string; // New field for cookie selector
+  cookieSelector?: string;
 }
 
 export interface AntiDetectSettings {
@@ -49,6 +49,8 @@ interface AutoFillFormProps {
   setSuccessKeyword: Dispatch<SetStateAction<string>>;
   antiDetect: AntiDetectSettings;
   setAntiDetect: Dispatch<SetStateAction<AntiDetectSettings>>;
+  sessionData: SessionData | null;
+  setSessionData: Dispatch<SetStateAction<SessionData | null>>;
 }
 
 export const AutoFillForm = ({
@@ -72,7 +74,9 @@ export const AutoFillForm = ({
   successKeyword,
   setSuccessKeyword,
   antiDetect,
-  setAntiDetect
+  setAntiDetect,
+  sessionData,
+  setSessionData,
 }: AutoFillFormProps) => {
 
   const emails = emailData
@@ -209,7 +213,6 @@ export const AutoFillForm = ({
                   disabled={isRunning}
                   className="bg-slate-900/50 border-slate-600 text-white text-xs"
                 />
-                {/* *** NEW FIELD ADDED HERE *** */}
                 <Input
                   placeholder="Cookie Accept button selector (optional)"
                   value={selectors.cookieSelector}
@@ -346,15 +349,26 @@ export const AutoFillForm = ({
                 </div>
                 <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
                     <div className="space-y-0.5">
-                        <Label htmlFor="persistent-session" className="text-base text-white">Persistent Session (Cookies)</Label>
-                        <p className="text-xs text-gray-400">Reuse cookies between requests to appear as a returning user.</p>
+                        <Label htmlFor="persistent-session" className="text-base text-white">Persistent Session</Label>
+                        <p className="text-xs text-gray-400">Reuse cookies, local and session storage.</p>
                     </div>
-                    <Switch
-                        id="persistent-session"
-                        checked={antiDetect.persistentSession}
-                        onCheckedChange={(checked) => setAntiDetect(prev => ({ ...prev, persistentSession: checked }))}
-                        disabled={isRunning}
-                    />
+                     <div className="flex items-center gap-2">
+                        <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => setSessionData(null)}
+                            disabled={!sessionData || isRunning}
+                            className="h-7 w-7 text-red-400 hover:bg-red-900/50"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                        </Button>
+                        <Switch
+                            id="persistent-session"
+                            checked={antiDetect.persistentSession}
+                            onCheckedChange={(checked) => setAntiDetect(prev => ({ ...prev, persistentSession: checked }))}
+                            disabled={isRunning}
+                        />
+                    </div>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
                     <div className="space-y-0.5">
