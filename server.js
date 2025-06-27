@@ -241,9 +241,10 @@ app.post('/api/auto-fill', async (req, res) => {
     if (antiDetect && antiDetect.disguiseFingerprint) {
       const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
       await page.setUserAgent(userAgent);
-      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      await page.setViewport({ width: 1366, height: 768, deviceScaleFactor: 1 });
     } else {
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+      await page.setViewport({ width: 1366, height: 768 });
     }
 
     let networkResponseText = '';
@@ -258,6 +259,22 @@ app.post('/api/auto-fill', async (req, res) => {
 
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
 
+    if (selectors.cookieSelector) {
+        try {
+            console.log(`Waiting for cookie banner button with selector: ${selectors.cookieSelector}`);
+            const cookieButton = await page.waitForSelector(selectors.cookieSelector, { visible: true, timeout: 7000 });
+            if (antiDetect.simulateMouse && cookieButton) {
+                await cookieButton.hover();
+                await sleep(500);
+            }
+            await page.click(selectors.cookieSelector);
+            console.log('Successfully clicked the cookie consent button.');
+            await sleep(1000); 
+        } catch (e) {
+            console.log(`Cookie consent button with selector "${selectors.cookieSelector}" not found or not clickable. Continuing...`);
+        }
+    }
+
     if (antiDetect && antiDetect.randomizeTimings) {
         await randomSleep(1500, 3000);
     } else {
@@ -267,7 +284,8 @@ app.post('/api/auto-fill', async (req, res) => {
     const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * 100 + 50) : 0;
 
     try {
-      await page.waitForSelector(selectors.emailSelector, { timeout: 10000 });
+      const emailInput = await page.waitForSelector(selectors.emailSelector, { timeout: 10000 });
+      if (antiDetect.simulateMouse && emailInput) { await emailInput.hover(); await sleep(500); }
       await page.type(selectors.emailSelector, email, { delay: typingDelay });
     } catch (error) {
       throw new Error(`Could not find email field with selector: ${selectors.emailSelector}`);
@@ -275,7 +293,8 @@ app.post('/api/auto-fill', async (req, res) => {
 
     if (selectors.nameSelector) {
       try {
-        await page.waitForSelector(selectors.nameSelector, { timeout: 5000 });
+        const nameInput = await page.waitForSelector(selectors.nameSelector, { timeout: 5000 });
+        if(antiDetect.simulateMouse && nameInput) { await nameInput.hover(); await sleep(500); }
         await page.type(selectors.nameSelector, generateRandomName(), { delay: typingDelay });
       } catch (error) {
         console.log('Name field not found or not required');
@@ -284,7 +303,8 @@ app.post('/api/auto-fill', async (req, res) => {
 
     if (selectors.phoneSelector) {
       try {
-        await page.waitForSelector(selectors.phoneSelector, { timeout: 5000 });
+        const phoneInput = await page.waitForSelector(selectors.phoneSelector, { timeout: 5000 });
+        if(antiDetect.simulateMouse && phoneInput) { await phoneInput.hover(); await sleep(500); }
         await page.type(selectors.phoneSelector, '+1234567890', { delay: typingDelay });
       } catch (error) {
         console.log('Phone field not found or not required');
@@ -292,8 +312,8 @@ app.post('/api/auto-fill', async (req, res) => {
     }
     
     try {
-        await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
-
+        const submitButton = await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
+        if(antiDetect.simulateMouse && submitButton) { await submitButton.hover(); await sleep(500); }
         await Promise.all([
             page.click(selectors.submitSelector),
             page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => console.log('No navigation after click, continuing...'))

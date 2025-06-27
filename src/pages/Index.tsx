@@ -126,7 +126,8 @@ const Index = () => {
     emailSelector: 'input[type="email"], input[name="email"], #email',
     submitSelector: 'button[type="submit"], input[type="submit"], .submit-btn',
     nameSelector: 'input[name="name"], input[name="first_name"], #name',
-    phoneSelector: 'input[name="phone"], input[type="tel"], #phone'
+    phoneSelector: 'input[name="phone"], input[type="tel"], #phone',
+    cookieSelector: '', // New field for cookie selector
   });
   const [successKeyword, setSuccessKeyword] = useState("");
   const [profiles, setProfiles] = useState<Record<string, ProfileData>>({});

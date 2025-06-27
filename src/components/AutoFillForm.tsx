@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FormInput, Play, Pause, Mail, Globe, AlertTriangle, GitBranch, Share2, Server, Key, Shield, HardDrive } from "lucide-react";
+import { FormInput, Play, Pause, Mail, Globe, AlertTriangle, GitBranch, Share2, Server, Key, Shield, HardDrive, Cookie } from "lucide-react"; // Added Cookie icon
 import { ValidProxy } from "@/pages/Index";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { Switch } from "./ui/switch";
@@ -16,6 +16,7 @@ export interface FormSelectors {
   submitSelector: string;
   nameSelector?: string;
   phoneSelector?: string;
+  cookieSelector?: string; // New field for cookie selector
 }
 
 export interface AntiDetectSettings {
@@ -192,7 +193,7 @@ export const AutoFillForm = ({
             </div>
 
             <div className="space-y-2">
-              <Label className="text-white">Form Selectors</Label>
+              <Label className="text-white">Form & Page Selectors</Label>
               <div className="grid grid-cols-1 gap-2">
                 <Input
                   placeholder="Email field selector"
@@ -205,6 +206,14 @@ export const AutoFillForm = ({
                   placeholder="Submit button selector"
                   value={selectors.submitSelector}
                   onChange={(e) => setSelectors({...selectors, submitSelector: e.target.value})}
+                  disabled={isRunning}
+                  className="bg-slate-900/50 border-slate-600 text-white text-xs"
+                />
+                {/* *** NEW FIELD ADDED HERE *** */}
+                <Input
+                  placeholder="Cookie Accept button selector (optional)"
+                  value={selectors.cookieSelector}
+                  onChange={(e) => setSelectors({...selectors, cookieSelector: e.target.value})}
                   disabled={isRunning}
                   className="bg-slate-900/50 border-slate-600 text-white text-xs"
                 />
