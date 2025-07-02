@@ -27,7 +27,6 @@ interface ProxyCheckerProps {
   onSetPinned: (proxiesToPin: string[], pinStatus: boolean) => void;
 }
 
-// **MODIFIED** Added 'Cloudflare' as an API provider
 const API_PROVIDERS = ['Cloudflare', 'ip-api.com', 'ipinfo.io'];
 const PROTOCOL_TYPES = ['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5'];
 const ANONYMITY_LEVELS = ['Elite', 'Anonymous', 'Transparent'];
@@ -56,11 +55,10 @@ export const ProxyChecker = ({
   
   const [targetUrl, setTargetUrl] = useState('');
   const [contentCheckString, setContentCheckString] = useState('');
-  const [checkCount, setCheckCount] = useState(3);
+  const [checkCount, setCheckCount] = useState(1); // Changed default value from 3 to 1
   const [rateLimit, setRateLimit] = useState('25');
-  // **MODIFIED** Set 'Cloudflare' as the default provider
   const [apiProvider, setApiProvider] = useState('Cloudflare');
-  const [apiKey, setApiKey] = useState(''); // API Key not needed for Cloudflare or ip-api.com
+  const [apiKey, setApiKey] = useState('');
 
   const displayResults = useMemo(() => {
     let filtered = [...results];
@@ -237,7 +235,6 @@ export const ProxyChecker = ({
               disabled={isChecking}
               className="bg-slate-900/50 border-slate-600 text-white"
             />
-            {/* **NEW** Conditional description for Cloudflare provider */}
             {apiProvider === 'Cloudflare' && (
                 <p className="text-xs text-sky-400">Enter your Cloudflare Worker URL ending in /log</p>
             )}
