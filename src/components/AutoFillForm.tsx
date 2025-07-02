@@ -25,7 +25,10 @@ export interface AntiDetectSettings {
   disguiseFingerprint: boolean;
   showBrowser: boolean;
   persistentSession: boolean;
+<<<<<<< HEAD
   disableWebRTC: boolean;
+=======
+>>>>>>> 214b088a10c59c54173b2eb4998fbbb85e969dc3
 }
 
 interface AutoFillFormProps {
@@ -407,6 +410,7 @@ export const AutoFillForm = ({
                         disabled={isRunning}
                     />
                 </div>
+<<<<<<< HEAD
                 <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
                     <div className="space-y-0.5">
                         <Label htmlFor="disable-webrtc" className="text-base text-white">Disable WebRTC</Label>
@@ -419,6 +423,8 @@ export const AutoFillForm = ({
                         disabled={isRunning}
                     />
                 </div>
+=======
+>>>>>>> 214b088a10c59c54173b2eb4998fbbb85e969dc3
             </CardContent>
         </Card>
       </div>

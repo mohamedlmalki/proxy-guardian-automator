@@ -156,8 +156,12 @@ const Index = () => {
     simulateMouse: false,
     disguiseFingerprint: false,
     showBrowser: false,
+<<<<<<< HEAD
     persistentSession: false,
     disableWebRTC: false
+=======
+    persistentSession: false
+>>>>>>> 214b088a10c59c54173b2eb4998fbbb85e969dc3
   });
 
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
@@ -284,7 +288,11 @@ const Index = () => {
     setDelay(profileData.delay ?? 2);
     setSelectors(profileData.selectors ?? { emailSelector: '', submitSelector: '' });
     setSuccessKeyword(profileData.successKeyword ?? "");
+<<<<<<< HEAD
     setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false });
+=======
+    setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false });
+>>>>>>> 214b088a10c59c54173b2eb4998fbbb85e969dc3
 
     setSelectedProfile(profileName);
     toast({ title: "Profile Loaded", description: `Loaded profile "${profileName}".` });
