@@ -157,7 +157,8 @@ const Index = () => {
     disguiseFingerprint: false,
     showBrowser: false,
     persistentSession: false,
-    disableWebRTC: false
+    disableWebRTC: false,
+    useMyScreenResolution: false,
   });
 
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
@@ -284,7 +285,7 @@ const Index = () => {
     setDelay(profileData.delay ?? 2);
     setSelectors(profileData.selectors ?? { emailSelector: '', submitSelector: '' });
     setSuccessKeyword(profileData.successKeyword ?? "");
-    setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false });
+    setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false });
 
     setSelectedProfile(profileName);
     toast({ title: "Profile Loaded", description: `Loaded profile "${profileName}".` });
@@ -794,7 +795,7 @@ const Index = () => {
     setIsSummaryDialogOpen(true);
   };
 
-  const handleStartAutoFill = (selectors: FormSelectors) => {
+  const handleStartAutoFill = () => {
     const emails = emailData.split('\n').map(line => line.trim()).filter(line => line.length > 0 && line.includes('@'));
     if (emails.length === 0) {
       toast({ title: "No emails to process", variant: "destructive" });
@@ -883,18 +884,27 @@ const Index = () => {
       let sourceContent = null;
 
       try {
+        const requestBody: any = {
+          email: emails[index],
+          targetUrl,
+          proxy: currentProxyForRequest,
+          selectors,
+          successKeyword,
+          antiDetect,
+          sessionData,
+        };
+
+        if (antiDetect.useMyScreenResolution) {
+          requestBody.screen = {
+            width: window.screen.width,
+            height: window.screen.height,
+          };
+        }
+
         const response = await fetch('/api/auto-fill', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: emails[index],
-            targetUrl,
-            proxy: currentProxyForRequest,
-            selectors,
-            successKeyword,
-            antiDetect,
-            sessionData
-          }),
+          body: JSON.stringify(requestBody),
         });
         const result = await response.json();
         finalMessage = result.message || (response.ok ? 'Submission successful.' : 'Submission failed.');
@@ -1196,7 +1206,7 @@ const Index = () => {
           <TabsContent value="autofill" className="space-y-6">
             <AutoFillForm
                 activeProxy={activeProxy}
-                onStartAutoFill={() => handleStartAutoFill(selectors)}
+                onStartAutoFill={() => handleStartAutoFill()}
                 onStopAutoFill={handleStopAutoFill}
                 isRunning={isAutoFillRunning}
                 progress={autoFillProgress}

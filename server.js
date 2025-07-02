@@ -23,24 +23,83 @@ app.use(cors());
 app.use(express.json());
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-const randomSleep = (min, max) => new Promise(res => setTimeout(res, Math.floor(Math.random() * (max - min + 1) + min)));
 
-const moveMouseLikeHuman = async (page, element) => {
-    const box = await element.boundingBox();
-    if (!box) return;
-    const startX = Math.floor(Math.random() * 100) + 50;
-    const startY = Math.floor(Math.random() * 100) + 50;
-    await page.mouse.move(startX, startY, { steps: 5 });
-    await sleep(100);
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 20 });
-    await sleep(200);
-};
-
-const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+const FINGERPRINT_PROFILES = [
+    {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        platform: 'Win32',
+        hardwareConcurrency: [8, 12, 16],
+        deviceMemory: [8, 16],
+        plugins: [
+            { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
+        ],
+        fonts: ['Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman', 'Georgia', 'Garamond', 'Courier New', 'Brush Script MT', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Segoe UI']
+    },
+    {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        platform: 'MacIntel',
+        hardwareConcurrency: [8, 10, 12],
+        deviceMemory: [8, 16, 32],
+        plugins: [
+            { name: 'QuickTime Plug-in', filename: 'QuickTime Plugin.plugin', description: 'QuickTime Plug-in 7.7.3' },
+            { name: 'Google Earth Plug-in', filename: 'Google Earth Web Player.plugin', description: 'GE Plugin' },
+            { name: 'Default Browser Helper', filename: 'Default Browser Helper.plugin', description: 'Default Browser Helper' }
+        ],
+        fonts: ['Helvetica', 'Arial', 'Geneva', 'Verdana', 'Times', 'Times New Roman', 'Courier', 'Monaco', 'Lucida Grande', 'Baskerville', 'Didot', 'Gill Sans', 'Futura']
+    },
+    {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
+        platform: 'Win32',
+        hardwareConcurrency: [4, 6, 8],
+        deviceMemory: [4, 8],
+        plugins: [
+            { name: 'OpenH264 Video Codec provided by Cisco Systems, Inc.', filename: 'gmpopenh264.dll', description: 'H.264 video codec' },
+            { name: 'Widevine Content Decryption Module provided by Google Inc.', filename: 'gmpxxx.dll', description: 'Widevine CDM' },
+            { name: 'Shockwave Flash', filename: 'NPSWF32.dll', description: 'Shockwave Flash 32.0 r0' },
+            { name: 'Java Plug-in 2 for NPAPI Browsers', filename: 'npjp2.dll', description: 'Java Platform SE 8' }
+        ],
+        fonts: ['Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman', 'Georgia', 'Garamond', 'Courier New', 'Brush Script MT', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Segoe UI']
+    },
+    {
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        platform: 'Linux x86_64',
+        hardwareConcurrency: [4, 8, 16],
+        deviceMemory: [8, 16],
+        plugins: [
+            { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'VLC Web Plugin', filename: 'libvlcplugin.so', description: 'VLC media player Web Plugin' },
+            { name: 'Totem Web Browser Plugin', filename: 'libtotem-video-thumbnailer.so', description: 'Totem video thumbnailer plugin' },
+            { name: 'Adobe Acrobat', filename: 'nppdf.so', description: 'Adobe® Acrobat® Plug-in for Web Browsers' },
+            { name: 'DivX Web Player', filename: 'libtotem-video-thumbnailer.so', description: 'DivX Web Player' }
+        ],
+        fonts: ['DejaVu Sans', 'Liberation Sans', 'Ubuntu', 'Cantarell', 'Droid Sans', 'Roboto', 'Noto Sans']
+    },
+    {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
+        platform: 'Win32',
+        hardwareConcurrency: [8, 12],
+        deviceMemory: [16, 32],
+        plugins: [
+            { name: 'Microsoft Office', filename: 'NPApi.dll', description: 'Office Presentation Plugin' },
+            { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        ],
+        fonts: ['Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman', 'Georgia', 'Garamond', 'Courier New', 'Brush Script MT', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Segoe UI']
+    },
+    {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+        platform: 'MacIntel',
+        hardwareConcurrency: [8, 10],
+        deviceMemory: [8, 16],
+        plugins: [
+            { name: 'QuickTime Plug-in', filename: 'QuickTime Plugin.plugin', description: 'QuickTime Plug-in 7.7.3' },
+        ],
+        fonts: ['Helvetica', 'Arial', 'Geneva', 'Verdana', 'Times', 'Times New Roman', 'Courier', 'Monaco', 'Lucida Grande', 'Baskerville', 'Didot', 'Gill Sans', 'Futura']
+    }
 ];
 
 const COMMON_VIEWPORTS = [
@@ -50,8 +109,6 @@ const COMMON_VIEWPORTS = [
   { width: 1440, height: 900 },
   { width: 1280, height: 720 },
 ];
-
-const generateRandomName = () => 'John Doe';
 
 const getTypeFromPort = (proxyString) => {
   try {
@@ -72,9 +129,9 @@ const getErrorMessage = (error) => {
 
 // Endpoint for the Proxy Checker
 app.post('/api/check-proxy', async (req, res) => {
-    const { proxy, checkCount = 1, expectedString, provider, targetUrl } = req.body; 
+    const { proxy, checkCount = 1, expectedString, provider, targetUrl } = req.body;
     if (!proxy) { return res.status(400).json({ isValid: false, error: 'Invalid proxy format' }); }
-    
+
     let agent;
     const proxyType = getTypeFromPort(proxy);
     if (proxyType === 'SOCKS4' || proxyType === 'SOCKS5') {
@@ -93,13 +150,13 @@ app.post('/api/check-proxy', async (req, res) => {
             const startTime = Date.now();
             const checkResponse = await axios.get(anonymityCheckUrl, { httpAgent: agent, httpsAgent: agent, timeout: 10000 });
             totalLatency += Date.now() - startTime;
-            
+
             if (expectedString && typeof checkResponse.data === 'string' && !checkResponse.data.includes(expectedString)) {
               throw new Error('Content validation failed: expected string not found.');
             }
 
             successes++;
-            
+
             if (i === 0) {
               const headers = checkResponse.data.headers;
               if (!headers['X-Forwarded-For'] && !headers['Via']) { anonymity = 'Elite'; }
@@ -143,7 +200,7 @@ app.post('/api/check-proxy', async (req, res) => {
                 };
             }
         }
-        
+
         res.json({
             proxy, isValid: true, latency: averageLatency, healthScore, anonymity, portType: getTypeFromPort(proxy),
             ...finalGeoData
@@ -193,8 +250,10 @@ app.post('/api/test-connection', async (req, res) => {
 
 // Endpoint for the Auto Filler
 app.post('/api/auto-fill', async (req, res) => {
-  const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData } = req.body;
-  
+  const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen } = req.body;
+
+  console.log('[DEBUG] Received screen object:', screen);
+
   if (!email || !targetUrl || !selectors) {
     return res.status(400).json({ success: false, message: 'Missing required parameters' });
   }
@@ -211,7 +270,7 @@ app.post('/api/auto-fill', async (req, res) => {
       '--disable-gpu',
       '--window-position=0,0'
     ];
-    
+
     if (proxy) {
         const proxyType = getTypeFromPort(proxy);
         if (proxyType.startsWith('SOCKS')) {
@@ -227,33 +286,53 @@ app.post('/api/auto-fill', async (req, res) => {
     });
 
     const page = await browser.newPage();
-    
-    if (antiDetect && antiDetect.disguiseFingerprint) {
-      const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-      await page.setUserAgent(userAgent);
-      
-      const viewport = COMMON_VIEWPORTS[Math.floor(Math.random() * COMMON_VIEWPORTS.length)];
-      console.log(`[DEBUG] Setting viewport and spoofing screen to: ${viewport.width}x${viewport.height}`);
-      
-      await page.setViewport({ ...viewport, deviceScaleFactor: 1 });
 
-      await page.evaluateOnNewDocument(vp => {
-        Object.defineProperty(navigator, 'screen', {
-          value: { ...navigator.screen, width: vp.width, height: vp.height, availWidth: vp.width, availHeight: vp.height },
-          configurable: true, enumerable: true, writable: true,
-        });
-      }, viewport);
+    if (antiDetect && antiDetect.disguiseFingerprint) {
+      const profile = FINGERPRINT_PROFILES[Math.floor(Math.random() * FINGERPRINT_PROFILES.length)];
+      await page.setUserAgent(profile.userAgent);
+      
+      const randomConcurrency = profile.hardwareConcurrency[Math.floor(Math.random() * profile.hardwareConcurrency.length)];
+      const randomMemory = profile.deviceMemory[Math.floor(Math.random() * profile.deviceMemory.length)];
+
+      await page.evaluateOnNewDocument((p) => {
+          Object.defineProperty(navigator, 'platform', { get: () => p.platform });
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => p.concurrency });
+          Object.defineProperty(navigator, 'deviceMemory', { get: () => p.memory });
+          Object.defineProperty(navigator, 'plugins', { get: () => p.plugins });
+          
+          // Spoof fonts by overriding the check function
+          const originalFontCheck = document.fonts.check;
+          document.fonts.check = function(font) {
+              // Return true for fonts in our randomized list
+              return p.fonts.some(f => font.toLowerCase().includes(f.toLowerCase()));
+          };
+
+      }, { 
+          platform: profile.platform, 
+          concurrency: randomConcurrency, 
+          memory: randomMemory,
+          plugins: profile.plugins,
+          // Select a random subset of fonts for this session
+          fonts: profile.fonts.sort(() => 0.5 - Math.random()).slice(0, Math.floor(Math.random() * 5) + 10)
+      });
+
+      const viewport = screen ? { width: screen.width, height: screen.height } : COMMON_VIEWPORTS[Math.floor(Math.random() * COMMON_VIEWPORTS.length)];
+      console.log(`[DEBUG] Attempting to set metrics via CDP to: ${viewport.width}x${viewport.height}`);
+
+      const client = await page.target().createCDPSession();
+      await client.send('Emulation.setDeviceMetricsOverride', {
+        width: viewport.width,
+        height: viewport.height,
+        deviceScaleFactor: 1,
+        mobile: false,
+        screenWidth: viewport.width,
+        screenHeight: viewport.height,
+        platform: profile.platform,
+      });
     }
-    
-    let networkResponseText = '';
-    page.on('response', async (response) => {
-        try {
-            networkResponseText += await response.text() + '\n';
-        } catch (e) { /* Ignore */ }
-    });
 
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-    
+
     if (selectors.cookieSelector) {
         try {
             await page.waitForSelector(selectors.cookieSelector, { visible: true, timeout: 7000 });
@@ -263,11 +342,11 @@ app.post('/api/auto-fill', async (req, res) => {
             console.log("Cookie banner not found or did not disappear. Continuing...");
         }
     }
-    
-    const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * 100 + 50) : 0;
-    
+
+    const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * (150 - 50 + 1) + 50) : 0;
+
     await page.type(selectors.emailSelector, email, { delay: typingDelay });
-    
+
     try {
         await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
         await page.$eval(selectors.submitSelector, button => button.click());
@@ -276,25 +355,24 @@ app.post('/api/auto-fill', async (req, res) => {
         await page.screenshot({ path: path.join(screenshotsDir, 'error_on_submit.png') });
         throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
     }
-    
+
     let successMessage = `Successfully submitted form for ${email}.`;
     let sourceContent = null;
 
     if (successKeyword) {
       const pageContent = await page.content();
       const keywordFoundInPage = pageContent.includes(successKeyword);
-      const keywordFoundInNetwork = networkResponseText.includes(successKeyword);
-      
-      if (!keywordFoundInPage && !keywordFoundInNetwork) {
-        throw new Error(`Failure: Keyword "${successKeyword}" not found in page content or network responses.`);
+
+      if (!keywordFoundInPage) {
+        throw new Error(`Failure: Keyword "${successKeyword}" not found in page content.`);
       }
-      
+
       successMessage += ` Validation: Found keyword "${successKeyword}".`;
-      sourceContent = keywordFoundInPage ? pageContent : networkResponseText;
+      sourceContent = pageContent;
     } else {
         successMessage += ` Validation: Automation script completed.`;
     }
-    
+
     res.json({
       success: true,
       message: successMessage,
@@ -313,8 +391,8 @@ app.post('/api/auto-fill', async (req, res) => {
              console.error("Could not get page content on error:", contentError.message);
         }
     }
-    res.status(500).json({ 
-        success: false, 
+    res.status(500).json({
+        success: false,
         message: error.message || 'Form submission failed',
         sourceContent: errorSourceContent
     });
@@ -379,6 +457,7 @@ app.post('/api/custom-test', async (req, res) => {
     }
   }
 });
+
 
 const PORT = 3001;
 app.listen(PORT, () => {
