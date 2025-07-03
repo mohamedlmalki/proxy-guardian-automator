@@ -28,6 +28,9 @@ import {
   Cookie,
   Trash2,
   Monitor,
+  MousePointer, // Added icon
+  Clock, // Added icon
+  Globe2, // Added icon
 } from "lucide-react";
 import { ValidProxy, SessionData } from "@/pages/Index";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -41,6 +44,7 @@ export interface FormSelectors {
   cookieSelector?: string;
 }
 
+// MODIFIED: Added spoofTimezone
 export interface AntiDetectSettings {
   randomizeTimings: boolean;
   simulateMouse: boolean;
@@ -49,6 +53,7 @@ export interface AntiDetectSettings {
   persistentSession: boolean;
   disableWebRTC: boolean;
   useMyScreenResolution?: boolean;
+  spoofTimezone: boolean; // NEW
 }
 
 interface AutoFillFormProps {
@@ -529,6 +534,35 @@ export const AutoFillForm = ({
                 />
               </div>
             </div>
+            
+            {/* --- NEW: Spoof Timezone --- */}
+            <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
+              <div className="space-y-0.5">
+                <Label
+                  htmlFor="spoof-timezone"
+                  className="text-base text-white flex items-center gap-2"
+                >
+                  <Globe2 className="w-4 h-4" />
+                  Spoof Timezone
+                </Label>
+                <p className="text-xs text-gray-400">
+                  Match browser timezone to the proxy's location.
+                </p>
+              </div>
+              <Switch
+                id="spoof-timezone"
+                checked={antiDetect.spoofTimezone}
+                onCheckedChange={(checked) =>
+                  setAntiDetect((prev) => ({
+                    ...prev,
+                    spoofTimezone: checked,
+                  }))
+                }
+                disabled={isRunning}
+              />
+            </div>
+            {/* --- END NEW --- */}
+
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
               <div className="space-y-0.5">
                 <Label

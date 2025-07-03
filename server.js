@@ -8,12 +8,18 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import path from 'path';
 import fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 
 puppeteer.use(StealthPlugin());
 
 const screenshotsDir = path.join(process.cwd(), 'screenshots');
 if (!fs.existsSync(screenshotsDir)){
     fs.mkdirSync(screenshotsDir, { recursive: true });
+}
+
+const sessionsDir = path.join(process.cwd(), 'sessions');
+if (!fs.existsSync(sessionsDir)) {
+    fs.mkdirSync(sessionsDir, { recursive: true });
 }
 
 dotenv.config();
@@ -189,13 +195,15 @@ app.post('/api/check-proxy', async (req, res) => {
             };
         } else {
             const ipAddress = proxy.split(':')[0];
-            const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as`);
+            // THE FINAL FIX IS HERE. I added 'timezone' back to the API call.
+            const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,timezone`);
             if (geoResponse.data.status === 'success') {
                 finalGeoData = {
                     location: geoResponse.data.countryCode || 'Unknown',
                     city: geoResponse.data.city,
                     country: geoResponse.data.country,
                     isp: geoResponse.data.as,
+                    timezone: geoResponse.data.timezone,
                     apiType: 'ip-api.com'
                 };
             }
@@ -250,9 +258,7 @@ app.post('/api/test-connection', async (req, res) => {
 
 // Endpoint for the Auto Filler
 app.post('/api/auto-fill', async (req, res) => {
-  const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen } = req.body;
-
-  console.log('[DEBUG] Received screen object:', screen);
+  const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen, timezone } = req.body;
 
   if (!email || !targetUrl || !selectors) {
     return res.status(400).json({ success: false, message: 'Missing required parameters' });
@@ -279,13 +285,33 @@ app.post('/api/auto-fill', async (req, res) => {
           browserArgs.push(`--proxy-server=http://${proxy}`);
         }
     }
+    
+    if (antiDetect) {
+        if (antiDetect.disableWebRTC) {
+            browserArgs.push('--disable-features=WebRtcHideLocalIpsWithMdns');
+        }
+    }
+
+    const sessionPath = (antiDetect?.persistentSession && sessionData?.id)
+        ? path.join(sessionsDir, sessionData.id)
+        : undefined;
 
     browser = await puppeteer.launch({
       headless: !(antiDetect && antiDetect.showBrowser),
-      args: browserArgs
+      args: browserArgs,
+      userDataDir: sessionPath
     });
 
     const page = await browser.newPage();
+    
+    if (antiDetect?.spoofTimezone && timezone) {
+        try {
+            await page.emulateTimezone(timezone);
+            console.log(`[DEBUG] Timezone spoofed to: ${timezone}`);
+        } catch (e) {
+            console.warn(`Could not set timezone: ${e.message}`);
+        }
+    }
 
     if (antiDetect && antiDetect.disguiseFingerprint) {
       const profile = FINGERPRINT_PROFILES[Math.floor(Math.random() * FINGERPRINT_PROFILES.length)];
@@ -300,10 +326,8 @@ app.post('/api/auto-fill', async (req, res) => {
           Object.defineProperty(navigator, 'deviceMemory', { get: () => p.memory });
           Object.defineProperty(navigator, 'plugins', { get: () => p.plugins });
           
-          // Spoof fonts by overriding the check function
           const originalFontCheck = document.fonts.check;
           document.fonts.check = function(font) {
-              // Return true for fonts in our randomized list
               return p.fonts.some(f => font.toLowerCase().includes(f.toLowerCase()));
           };
 
@@ -312,12 +336,10 @@ app.post('/api/auto-fill', async (req, res) => {
           concurrency: randomConcurrency, 
           memory: randomMemory,
           plugins: profile.plugins,
-          // Select a random subset of fonts for this session
           fonts: profile.fonts.sort(() => 0.5 - Math.random()).slice(0, Math.floor(Math.random() * 5) + 10)
       });
 
       const viewport = screen ? { width: screen.width, height: screen.height } : COMMON_VIEWPORTS[Math.floor(Math.random() * COMMON_VIEWPORTS.length)];
-      console.log(`[DEBUG] Attempting to set metrics via CDP to: ${viewport.width}x${viewport.height}`);
 
       const client = await page.target().createCDPSession();
       await client.send('Emulation.setDeviceMetricsOverride', {
@@ -349,6 +371,12 @@ app.post('/api/auto-fill', async (req, res) => {
 
     try {
         await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
+        
+        if (antiDetect?.simulateMouse) {
+            await page.hover(selectors.submitSelector);
+            await sleep(Math.random() * 200 + 100);
+        }
+        
         await page.$eval(selectors.submitSelector, button => button.click());
         await sleep(3000);
     } catch (error) {
@@ -372,11 +400,18 @@ app.post('/api/auto-fill', async (req, res) => {
     } else {
         successMessage += ` Validation: Automation script completed.`;
     }
+    
+    let newSessionData = null;
+    if (antiDetect?.persistentSession) {
+        newSessionData = sessionData || { id: uuidv4() };
+        newSessionData.cookies = await page.cookies(); 
+    }
 
     res.json({
       success: true,
       message: successMessage,
-      sourceContent: sourceContent
+      sourceContent: sourceContent,
+      sessionData: newSessionData
     });
 
   } catch (error) {
