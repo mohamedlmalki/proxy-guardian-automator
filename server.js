@@ -30,91 +30,81 @@ app.use(express.json());
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
-const FINGERPRINT_PROFILES = [
-    {
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        platform: 'Win32',
-        hardwareConcurrency: [8, 12, 16],
-        deviceMemory: [8, 16],
-        plugins: [
-            { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
-        ],
-        fonts: ['Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman', 'Georgia', 'Garamond', 'Courier New', 'Brush Script MT', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Segoe UI']
-    },
-    {
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        platform: 'MacIntel',
-        hardwareConcurrency: [8, 10, 12],
-        deviceMemory: [8, 16, 32],
-        plugins: [
-            { name: 'QuickTime Plug-in', filename: 'QuickTime Plugin.plugin', description: 'QuickTime Plug-in 7.7.3' },
-            { name: 'Google Earth Plug-in', filename: 'Google Earth Web Player.plugin', description: 'GE Plugin' },
-            { name: 'Default Browser Helper', filename: 'Default Browser Helper.plugin', description: 'Default Browser Helper' }
-        ],
-        fonts: ['Helvetica', 'Arial', 'Geneva', 'Verdana', 'Times', 'Times New Roman', 'Courier', 'Monaco', 'Lucida Grande', 'Baskerville', 'Didot', 'Gill Sans', 'Futura']
-    },
-    {
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-        platform: 'Win32',
-        hardwareConcurrency: [4, 6, 8],
-        deviceMemory: [4, 8],
-        plugins: [
-            { name: 'OpenH264 Video Codec provided by Cisco Systems, Inc.', filename: 'gmpopenh264.dll', description: 'H.264 video codec' },
-            { name: 'Widevine Content Decryption Module provided by Google Inc.', filename: 'gmpxxx.dll', description: 'Widevine CDM' },
-            { name: 'Shockwave Flash', filename: 'NPSWF32.dll', description: 'Shockwave Flash 32.0 r0' },
-            { name: 'Java Plug-in 2 for NPAPI Browsers', filename: 'npjp2.dll', description: 'Java Platform SE 8' }
-        ],
-        fonts: ['Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman', 'Georgia', 'Garamond', 'Courier New', 'Brush Script MT', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Segoe UI']
-    },
-    {
-        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        platform: 'Linux x86_64',
-        hardwareConcurrency: [4, 8, 16],
-        deviceMemory: [8, 16],
-        plugins: [
-            { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'VLC Web Plugin', filename: 'libvlcplugin.so', description: 'VLC media player Web Plugin' },
-            { name: 'Totem Web Browser Plugin', filename: 'libtotem-video-thumbnailer.so', description: 'Totem video thumbnailer plugin' },
-            { name: 'Adobe Acrobat', filename: 'nppdf.so', description: 'Adobe® Acrobat® Plug-in for Web Browsers' },
-            { name: 'DivX Web Player', filename: 'libtotem-video-thumbnailer.so', description: 'DivX Web Player' }
-        ],
-        fonts: ['DejaVu Sans', 'Liberation Sans', 'Ubuntu', 'Cantarell', 'Droid Sans', 'Roboto', 'Noto Sans']
-    },
-    {
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
-        platform: 'Win32',
-        hardwareConcurrency: [8, 12],
-        deviceMemory: [16, 32],
-        plugins: [
-            { name: 'Microsoft Office', filename: 'NPApi.dll', description: 'Office Presentation Plugin' },
-            { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-        ],
-        fonts: ['Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman', 'Georgia', 'Garamond', 'Courier New', 'Brush Script MT', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Segoe UI']
-    },
-    {
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
-        platform: 'MacIntel',
-        hardwareConcurrency: [8, 10],
-        deviceMemory: [8, 16],
-        plugins: [
-            { name: 'QuickTime Plug-in', filename: 'QuickTime Plugin.plugin', description: 'QuickTime Plug-in 7.7.3' },
-        ],
-        fonts: ['Helvetica', 'Arial', 'Geneva', 'Verdana', 'Times', 'Times New Roman', 'Courier', 'Monaco', 'Lucida Grande', 'Baskerville', 'Didot', 'Gill Sans', 'Futura']
-    }
+// --- Corrected Fingerprint Profiles ---
+
+const DESKTOP_FINGERPRINTS = [
+    { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', platform: 'Win32', resolution: { width: 1920, height: 1080 } },
+    { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', platform: 'MacIntel', resolution: { width: 1536, height: 864 } },
+    { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0', platform: 'Win32', resolution: { width: 1440, height: 900 } },
+    { userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', platform: 'Linux x86_64', resolution: { width: 1366, height: 768 } },
+    { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0', platform: 'Win32', resolution: { width: 2560, height: 1440 } },
+    { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15', platform: 'MacIntel', resolution: { width: 1680, height: 1050 } },
+    { userAgent: 'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', platform: 'Win32', resolution: { width: 1280, height: 800 } }
 ];
 
-const COMMON_VIEWPORTS = [
-  { width: 1920, height: 1080 },
-  { width: 1366, height: 768 },
-  { width: 1536, height: 864 },
-  { width: 1440, height: 900 },
-  { width: 1280, height: 720 },
+const PHONE_FINGERPRINTS = [
+    { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1', platform: 'iPhone', resolution: { width: 390, height: 844 } }, // iPhone 13/14
+    { userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.113 Mobile Safari/537.36', platform: 'Linux armv8l', resolution: { width: 412, height: 915 } }, // Matches modern Android
+    { userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36', platform: 'Linux armv8l', resolution: { width: 412, height: 915 } }, // Google Pixel
+    { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1', platform: 'iPhone', resolution: { width: 414, height: 896 } }, // iPhone 11/XR
+    { userAgent: 'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.99 Mobile Safari/537.36', platform: 'Linux armv8l', resolution: { width: 360, height: 740 } }, // Samsung Galaxy S series
+    { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_7_9 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.3 Mobile/15E148 Safari/604.1', platform: 'iPhone', resolution: { width: 375, height: 667 } }  // iPhone 6/7/8
 ];
+
+
+const ALL_PLUGINS = [
+    { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'QuickTime Plug-in', filename: 'QuickTime Plugin.plugin', description: 'QuickTime Plug-in 7.7.3' },
+    { name: 'Google Earth Plug-in', filename: 'Google Earth Web Player.plugin', description: 'GE Plugin' },
+    { name: 'Default Browser Helper', filename: 'Default Browser Helper.plugin', description: 'Default Browser Helper' },
+    { name: 'OpenH264 Video Codec provided by Cisco Systems, Inc.', filename: 'gmpopenh264.dll', description: 'H.264 video codec' },
+    { name: 'Widevine Content Decryption Module provided by Google Inc.', filename: 'gmpxxx.dll', description: 'Widevine CDM' },
+    { name: 'Shockwave Flash', filename: 'NPSWF32.dll', description: 'Shockwave Flash 32.0 r0' },
+    { name: 'Java Plug-in 2 for NPAPI Browsers', filename: 'npjp2.dll', description: 'Java Platform SE 8' },
+    { name: 'VLC Web Plugin', filename: 'libvlcplugin.so', description: 'VLC media player Web Plugin' },
+    { name: 'Totem Web Browser Plugin', filename: 'libtotem-video-thumbnailer.so', description: 'Totem video thumbnailer plugin' },
+    { name: 'Adobe Acrobat', filename: 'nppdf.so', description: 'Adobe® Acrobat® Plug-in for Web Browsers' },
+    { name: 'DivX Web Player', filename: 'libtotem-video-thumbnailer.so', description: 'DivX Web Player' },
+    { name: 'Microsoft Office', filename: 'NPApi.dll', description: 'Office Presentation Plugin' },
+];
+
+
+const generateFingerprintProfiles = () => {
+    const profiles = [];
+
+    // Generate 7 Desktop Profiles from the structured data
+    DESKTOP_FINGERPRINTS.forEach(baseProfile => {
+        const shuffledPlugins = [...ALL_PLUGINS].sort(() => 0.5 - Math.random());
+        profiles.push({
+            type: 'desktop',
+            ...baseProfile,
+            hardwareConcurrency: [8, 12, 16][Math.floor(Math.random() * 3)],
+            deviceMemory: [8, 16, 32][Math.floor(Math.random() * 3)],
+            plugins: shuffledPlugins.slice(0, Math.floor(Math.random() * 4) + 3), // 3 to 6 plugins
+            fonts: ['Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman', 'Georgia', 'Garamond', 'Courier New', 'Brush Script MT', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Segoe UI'].sort(() => 0.5 - Math.random())
+        });
+    });
+
+    // Generate 6 Phone Profiles from the structured data
+    PHONE_FINGERPRINTS.forEach(baseProfile => {
+        profiles.push({
+            type: 'phone',
+            ...baseProfile,
+            hardwareConcurrency: [4, 6, 8][Math.floor(Math.random() * 3)],
+            deviceMemory: [4, 6, 8][Math.floor(Math.random() * 3)],
+            plugins: [], // No plugins for mobile
+            fonts: ['-apple-system', 'BlinkMacSystemFont', 'San Francisco', 'Helvetica Neue', 'Arial', 'sans-serif'].sort(() => 0.5 - Math.random())
+        });
+    });
+
+    return profiles;
+};
+
+const FINGERPRINT_PROFILES = generateFingerprintProfiles();
 
 const getTypeFromPort = (proxyString) => {
   try {
@@ -192,13 +182,14 @@ app.post('/api/check-proxy', async (req, res) => {
                 city: 'N/A (CF Worker)',
                 isp: 'N/A (CF Worker)',
                 apiType: 'Cloudflare',
-                // --- THIS IS THE FIX ---
-                timezone: workerData.cloudflare_data?.timezone 
-                // ----------------------
+                timezone: workerData.cloudflare_data?.timezone,
+                latitude: workerData.cloudflare_data?.latitude,
+                longitude: workerData.cloudflare_data?.longitude
             };
         } else {
             const ipAddress = proxy.split(':')[0];
-            const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,timezone`);
+            // ** Fetch lat and lon from the API **
+            const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,timezone,lat,lon`);
             if (geoResponse.data.status === 'success') {
                 finalGeoData = {
                     location: geoResponse.data.countryCode || 'Unknown',
@@ -206,6 +197,8 @@ app.post('/api/check-proxy', async (req, res) => {
                     country: geoResponse.data.country,
                     isp: geoResponse.data.as,
                     timezone: geoResponse.data.timezone,
+                    latitude: geoResponse.data.lat,
+                    longitude: geoResponse.data.lon,
                     apiType: 'ip-api.com'
                 };
             }
@@ -259,15 +252,16 @@ app.post('/api/test-connection', async (req, res) => {
 });
 
 // Endpoint for the Auto Filler
+// ** Added latitude and longitude to the destructured request body **
 app.post('/api/auto-fill', async (req, res) => {
-  const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen, timezone } = req.body;
+  const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen, timezone, latitude, longitude } = req.body;
 
-  // --- ADDED LOGS ---
   console.log('\n\n--- NEW AUTO-FILL REQUEST ---');
   console.log(`[INFO] Received request to fill form for: ${email} at ${targetUrl}`);
-  console.log(`[INFO] Timezone to spoof: ${timezone}`);
+  console.log(`[INFO] Spoofing Timezone: ${timezone}`);
+  // ** Log the geolocation being spoofed **
+  console.log(`[INFO] Spoofing Geolocation: Lat ${latitude}, Lon ${longitude}`);
   console.log(`[INFO] Anti-detect settings:`, antiDetect);
-  // --------------------
 
   if (!email || !targetUrl || !selectors) {
     return res.status(400).json({ success: false, message: 'Missing required parameters' });
@@ -305,9 +299,7 @@ app.post('/api/auto-fill', async (req, res) => {
         ? path.join(sessionsDir, sessionData.id)
         : undefined;
 
-    // --- ADDED LOGS ---
     console.log('[INFO] Launching browser with args:', browserArgs);
-    // --------------------
 
     browser = await puppeteer.launch({
       headless: !(antiDetect && antiDetect.showBrowser),
@@ -317,62 +309,23 @@ app.post('/api/auto-fill', async (req, res) => {
 
     const page = await browser.newPage();
     
+    // ** Set Geolocation before emulating timezone **
+    if (antiDetect?.spoofGeolocation && latitude && longitude) {
+        await page.setGeolocation({ latitude, longitude });
+    }
+
     if (antiDetect?.spoofTimezone && timezone) {
-        await page.evaluateOnNewDocument((tz) => {
-            // Override Intl.DateTimeFormat
-            const originalDateTimeFormat = Intl.DateTimeFormat;
-            Intl.DateTimeFormat = (locales, options) => {
-                if (options && options.timeZone) {
-                    return new originalDateTimeFormat(locales, { ...options, timeZone: tz });
-                }
-                return new originalDateTimeFormat(locales, { ...options, timeZone: tz });
-            };
-
-            const originalResolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
-            Intl.DateTimeFormat.prototype.resolvedOptions = function() {
-                const resolved = originalResolvedOptions.call(this);
-                resolved.timeZone = tz;
-                return resolved;
-            };
-
-            // Override new Date()
-            const originalDate = Date;
-            // @ts-ignore
-            Date = class extends originalDate {
-                constructor(...args) {
-                    if (args.length) {
-                        // @ts-ignore
-                        super(...args);
-                    } else {
-                        const now = new originalDate();
-                        const zonedDate = new originalDate(now.toLocaleString('en-US', { timeZone: tz }));
-                        const offset = now.getTime() - zonedDate.getTime();
-                        // @ts-ignore
-                        super(now.getTime() - offset);
-                    }
-                }
-
-                toLocaleString(locales, options) {
-                    return super.toLocaleString(locales, { ...options, timeZone: tz });
-                }
-            };
-        }, timezone);
-        // --- ADDED LOGS ---
-        console.log(`[INFO] Injected timezone spoofing script for timezone: ${timezone}`);
-        // --------------------
+        await page.emulateTimezone(timezone);
     }
 
     if (antiDetect && antiDetect.disguiseFingerprint) {
       const profile = FINGERPRINT_PROFILES[Math.floor(Math.random() * FINGERPRINT_PROFILES.length)];
       await page.setUserAgent(profile.userAgent);
       
-      const randomConcurrency = profile.hardwareConcurrency[Math.floor(Math.random() * profile.hardwareConcurrency.length)];
-      const randomMemory = profile.deviceMemory[Math.floor(Math.random() * profile.deviceMemory.length)];
-
       await page.evaluateOnNewDocument((p) => {
           Object.defineProperty(navigator, 'platform', { get: () => p.platform });
-          Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => p.concurrency });
-          Object.defineProperty(navigator, 'deviceMemory', { get: () => p.memory });
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => p.hardwareConcurrency });
+          Object.defineProperty(navigator, 'deviceMemory', { get: () => p.deviceMemory });
           Object.defineProperty(navigator, 'plugins', { get: () => p.plugins });
           
           const originalFontCheck = document.fonts.check;
@@ -382,23 +335,25 @@ app.post('/api/auto-fill', async (req, res) => {
 
       }, { 
           platform: profile.platform, 
-          concurrency: randomConcurrency, 
-          memory: randomMemory,
+          hardwareConcurrency: profile.hardwareConcurrency, 
+          deviceMemory: profile.deviceMemory,
           plugins: profile.plugins,
           fonts: profile.fonts.sort(() => 0.5 - Math.random()).slice(0, Math.floor(Math.random() * 5) + 10)
       });
-
-      const viewport = screen ? { width: screen.width, height: screen.height } : COMMON_VIEWPORTS[Math.floor(Math.random() * COMMON_VIEWPORTS.length)];
+        
+      const viewport = (profile.type === 'desktop' && screen && antiDetect.useMyScreenResolution) 
+          ? { width: screen.width, height: screen.height } 
+          : profile.resolution;
 
       const client = await page.target().createCDPSession();
       await client.send('Emulation.setDeviceMetricsOverride', {
         width: viewport.width,
         height: viewport.height,
-        deviceScaleFactor: 1,
-        mobile: false,
+        deviceScaleFactor: profile.type === 'phone' ? 2 : 1,
+        mobile: profile.type === 'phone',
         screenWidth: viewport.width,
         screenHeight: viewport.height,
-        platform: profile.platform,
+        platform: profile.platform.includes('Win') ? 'Windows' : profile.platform.includes('Mac') ? 'macOS' : 'Linux', // More accurate emulation
       });
     }
 
