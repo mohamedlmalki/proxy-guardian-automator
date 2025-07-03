@@ -191,11 +191,13 @@ app.post('/api/check-proxy', async (req, res) => {
                 country: workerData.source_country,
                 city: 'N/A (CF Worker)',
                 isp: 'N/A (CF Worker)',
-                apiType: 'Cloudflare'
+                apiType: 'Cloudflare',
+                // --- THIS IS THE FIX ---
+                timezone: workerData.cloudflare_data?.timezone 
+                // ----------------------
             };
         } else {
             const ipAddress = proxy.split(':')[0];
-            // THE FINAL FIX IS HERE. I added 'timezone' back to the API call.
             const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,timezone`);
             if (geoResponse.data.status === 'success') {
                 finalGeoData = {
@@ -260,6 +262,13 @@ app.post('/api/test-connection', async (req, res) => {
 app.post('/api/auto-fill', async (req, res) => {
   const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen, timezone } = req.body;
 
+  // --- ADDED LOGS ---
+  console.log('\n\n--- NEW AUTO-FILL REQUEST ---');
+  console.log(`[INFO] Received request to fill form for: ${email} at ${targetUrl}`);
+  console.log(`[INFO] Timezone to spoof: ${timezone}`);
+  console.log(`[INFO] Anti-detect settings:`, antiDetect);
+  // --------------------
+
   if (!email || !targetUrl || !selectors) {
     return res.status(400).json({ success: false, message: 'Missing required parameters' });
   }
@@ -288,13 +297,17 @@ app.post('/api/auto-fill', async (req, res) => {
     
     if (antiDetect) {
         if (antiDetect.disableWebRTC) {
-            browserArgs.push('--disable-features=WebRtcHideLocalIpsWithMdns');
+            browserArgs.push('--disable-webrtc');
         }
     }
 
     const sessionPath = (antiDetect?.persistentSession && sessionData?.id)
         ? path.join(sessionsDir, sessionData.id)
         : undefined;
+
+    // --- ADDED LOGS ---
+    console.log('[INFO] Launching browser with args:', browserArgs);
+    // --------------------
 
     browser = await puppeteer.launch({
       headless: !(antiDetect && antiDetect.showBrowser),
@@ -305,12 +318,48 @@ app.post('/api/auto-fill', async (req, res) => {
     const page = await browser.newPage();
     
     if (antiDetect?.spoofTimezone && timezone) {
-        try {
-            await page.emulateTimezone(timezone);
-            console.log(`[DEBUG] Timezone spoofed to: ${timezone}`);
-        } catch (e) {
-            console.warn(`Could not set timezone: ${e.message}`);
-        }
+        await page.evaluateOnNewDocument((tz) => {
+            // Override Intl.DateTimeFormat
+            const originalDateTimeFormat = Intl.DateTimeFormat;
+            Intl.DateTimeFormat = (locales, options) => {
+                if (options && options.timeZone) {
+                    return new originalDateTimeFormat(locales, { ...options, timeZone: tz });
+                }
+                return new originalDateTimeFormat(locales, { ...options, timeZone: tz });
+            };
+
+            const originalResolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+            Intl.DateTimeFormat.prototype.resolvedOptions = function() {
+                const resolved = originalResolvedOptions.call(this);
+                resolved.timeZone = tz;
+                return resolved;
+            };
+
+            // Override new Date()
+            const originalDate = Date;
+            // @ts-ignore
+            Date = class extends originalDate {
+                constructor(...args) {
+                    if (args.length) {
+                        // @ts-ignore
+                        super(...args);
+                    } else {
+                        const now = new originalDate();
+                        const zonedDate = new originalDate(now.toLocaleString('en-US', { timeZone: tz }));
+                        const offset = now.getTime() - zonedDate.getTime();
+                        // @ts-ignore
+                        super(now.getTime() - offset);
+                    }
+                }
+
+                toLocaleString(locales, options) {
+                    return super.toLocaleString(locales, { ...options, timeZone: tz });
+                }
+            };
+        }, timezone);
+        // --- ADDED LOGS ---
+        console.log(`[INFO] Injected timezone spoofing script for timezone: ${timezone}`);
+        // --------------------
     }
 
     if (antiDetect && antiDetect.disguiseFingerprint) {

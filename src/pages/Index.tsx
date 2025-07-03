@@ -421,7 +421,6 @@ const Index = () => {
     setIsSummaryDialogOpen(true);
   };
 
-  // This is the function with the main fix
   const handleStartAutoFill = async () => {
     const emails = emailData.split('\n').map(line => line.trim()).filter(line => line.length > 0 && line.includes('@'));
     if (emails.length === 0) {
@@ -435,8 +434,6 @@ const Index = () => {
 
     if (autoFillMode === 'switcher' && switcherStatus === 'stopped') {
       toast({ title: "Auto-starting Proxy Switcher..." });
-      // THE FIX: We MUST wait for the switcher to start and select a proxy
-      // before we try to process emails.
       await handleStartSwitcher(); 
       setSwitcherStartedByAutoFill(true);
     } else {
@@ -476,7 +473,18 @@ const Index = () => {
       let finalMessage = '';
       let sourceContent = null;
       try {
-        const requestBody: any = { email: emails[index], targetUrl, proxy: currentProxyForRequest, selectors, successKeyword, antiDetect, sessionData, timezone: activeProxyRef.current?.timezone };
+        const currentActiveProxy = validProxies.find(p => p.proxy === activeProxyRef.current?.proxy);
+        const requestBody: any = { 
+            email: emails[index], 
+            targetUrl, 
+            proxy: currentProxyForRequest, 
+            selectors, 
+            successKeyword, 
+            antiDetect, 
+            sessionData, 
+            timezone: currentActiveProxy?.timezone 
+        };
+        
         if (antiDetect.useMyScreenResolution) { requestBody.screen = { width: window.screen.width, height: window.screen.height }; }
         const response = await fetch('/api/auto-fill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
         const result = await response.json();
@@ -508,7 +516,14 @@ const Index = () => {
   useEffect(() => { const pinnedStrings = new Set(pinnedProxies); setCheckerResults(prevResults => prevResults.map(r => ({ ...r, isPinned: pinnedStrings.has(r.proxy) }))); }, [pinnedProxies]);
   const isCheckingRef = useRef(isChecking);
   useEffect(() => { isCheckingRef.current = isChecking; }, [isChecking]);
-  const handleProxiesValidated = (proxies: ValidProxy[]) => { setValidProxies(proxies); if(switcherStatus !== 'stopped') { toast({ title: "Proxy List Updated", description: "The list of proxies for the switcher has been updated." }); } };
+  const handleProxiesValidated = (proxies: ValidProxy[]) => { 
+    // We remove the debug log now that we know the data is arriving correctly
+    setValidProxies(proxies); 
+    if(switcherStatus !== 'stopped') { 
+      toast({ title: "Proxy List Updated", description: "The list of proxies for the switcher has been updated." }); 
+    } 
+  };
+
   const checkProxy = async (proxy: string, targetUrl: string, checkCount: number, provider: string, apiKey: string, contentCheckString: string): Promise<ValidProxy> => { try { const response = await fetch('/api/check-proxy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxy, targetUrl, checkCount, provider, apiKey, expectedString: contentCheckString }) }); if (!response.ok) { throw new Error(`API request failed with status ${response.status}`); } const data = await response.json(); return { ...data, isPinned: pinnedProxies.includes(proxy), lastChecked: Date.now() }; } catch (error: any) { return { proxy, isValid: false, apiType: 'Error', portType: 'Error', healthScore: 0, isPinned: pinnedProxies.includes(proxy), lastChecked: Date.now() }; } };
   const handleCheckProxies = async (rateLimit: string, targetUrl: string, checkCount: number, provider: string, apiKey: string, contentCheckString: string) => {
     isCheckingRef.current = true; setIsChecking(true);
