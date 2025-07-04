@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction } from "react";
+import { Dispatch, SetStateAction, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,14 +24,11 @@ import {
   Server,
   Key,
   Shield,
-  HardDrive,
-  Cookie,
   Trash2,
-  Monitor,
-  MousePointer,
   Clock,
   Globe2,
-  Fingerprint, // Added icon
+  Fingerprint,
+  Beaker, // Icon for Test button
 } from "lucide-react";
 import { ValidProxy, SessionData } from "@/pages/Index";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -55,7 +52,7 @@ export interface AntiDetectSettings {
   useMyScreenResolution?: boolean;
   spoofTimezone: boolean;
   spoofGeolocation: boolean;
-  spoofCanvas: boolean; // NEW
+  spoofCanvas: boolean;
 }
 
 interface AutoFillFormProps {
@@ -109,6 +106,9 @@ export const AutoFillForm = ({
   sessionData,
   setSessionData,
 }: AutoFillFormProps) => {
+  const [testResponse, setTestResponse] = useState<string | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+
   const emails = emailData
     .split("\n")
     .map((line) => line.trim())
@@ -118,8 +118,43 @@ export const AutoFillForm = ({
     onStartAutoFill();
   };
 
+  const handleTestClick = async () => {
+    setIsTesting(true);
+    setTestResponse(null);
+    try {
+      const firstEmail = emails[0];
+      if (!firstEmail) {
+        setTestResponse("Error: No valid email available for testing.");
+        return;
+      }
+
+      const response = await fetch('/api/test-fill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: firstEmail,
+          targetUrl,
+          proxy: autoFillMode === 'switcher' ? activeProxy?.proxy : null,
+          selectors,
+          antiDetect,
+        }),
+      });
+
+      const result = await response.json();
+      if (response.ok) {
+        setTestResponse(result.sourceContent);
+      } else {
+        setTestResponse(`Error: ${result.message}\n\n--- Page Source ---\n${result.sourceContent || 'Not available.'}`);
+      }
+    } catch (error: any) {
+      setTestResponse(`Error: ${error.message}`);
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
   const isStartDisabled = () => {
-    if (isRunning) return true;
+    if (isRunning || isTesting) return true;
     if (emails.length === 0 || !targetUrl) return true;
     if (autoFillMode === "switcher" && !activeProxy) return true;
     return false;
@@ -140,13 +175,14 @@ export const AutoFillForm = ({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* ... existing form fields ... */}
             <div className="space-y-3">
               <Label className="text-white">Proxy Mode</Label>
               <RadioGroup
                 value={autoFillMode}
                 onValueChange={setAutoFillMode as (value: string) => void}
                 className="flex space-x-4 pt-2"
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               >
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="switcher" id="switcher" />
@@ -221,7 +257,7 @@ export const AutoFillForm = ({
                 placeholder="https://example.com/signup"
                 value={targetUrl}
                 onChange={(e) => setTargetUrl(e.target.value)}
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
                 className="bg-slate-900/50 border-slate-600 text-white"
               />
             </div>
@@ -239,7 +275,7 @@ export const AutoFillForm = ({
                 placeholder="e.g., 'Thank you for your submission'"
                 value={successKeyword}
                 onChange={(e) => setSuccessKeyword(e.target.value)}
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
                 className="bg-slate-900/50 border-slate-600 text-white"
               />
               <CardDescription className="text-gray-400 text-xs">
@@ -259,7 +295,7 @@ export const AutoFillForm = ({
                 max="30"
                 value={delay}
                 onChange={(e) => setDelay(parseInt(e.target.value) || 2)}
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
                 className="bg-slate-900/50 border-slate-600 text-white"
               />
             </div>
@@ -273,7 +309,7 @@ export const AutoFillForm = ({
                   onChange={(e) =>
                     setSelectors({ ...selectors, emailSelector: e.target.value })
                   }
-                  disabled={isRunning}
+                  disabled={isRunning || isTesting}
                   className="bg-slate-900/50 border-slate-600 text-white text-xs"
                 />
                 <Input
@@ -285,7 +321,7 @@ export const AutoFillForm = ({
                       submitSelector: e.target.value,
                     })
                   }
-                  disabled={isRunning}
+                  disabled={isRunning || isTesting}
                   className="bg-slate-900/50 border-slate-600 text-white text-xs"
                 />
                 <Input
@@ -297,7 +333,7 @@ export const AutoFillForm = ({
                       cookieSelector: e.target.value,
                     })
                   }
-                  disabled={isRunning}
+                  disabled={isRunning || isTesting}
                   className="bg-slate-900/50 border-slate-600 text-white text-xs"
                 />
                 <Input
@@ -306,7 +342,7 @@ export const AutoFillForm = ({
                   onChange={(e) =>
                     setSelectors({ ...selectors, nameSelector: e.target.value })
                   }
-                  disabled={isRunning}
+                  disabled={isRunning || isTesting}
                   className="bg-slate-900/50 border-slate-600 text-white text-xs"
                 />
                 <Input
@@ -315,7 +351,7 @@ export const AutoFillForm = ({
                   onChange={(e) =>
                     setSelectors({ ...selectors, phoneSelector: e.target.value })
                   }
-                  disabled={isRunning}
+                  disabled={isRunning || isTesting}
                   className="bg-slate-900/50 border-slate-600 text-white text-xs"
                 />
               </div>
@@ -331,7 +367,7 @@ export const AutoFillForm = ({
                 className="min-h-[150px] bg-slate-900/50 border-slate-600 text-white"
                 value={emailData}
                 onChange={(e) => setEmailData(e.target.value)}
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
               {emails.length > 0 && (
                 <div className="flex items-center space-x-2 text-sm text-green-400">
@@ -340,7 +376,7 @@ export const AutoFillForm = ({
                 </div>
               )}
             </div>
-
+            
             <div className="flex space-x-2">
               {!isRunning ? (
                 <Button
@@ -360,11 +396,34 @@ export const AutoFillForm = ({
                   Stop
                 </Button>
               )}
+               <Button
+                onClick={handleTestClick}
+                disabled={isStartDisabled() || isRunning || isTesting}
+                variant="outline"
+                className="bg-sky-600 hover:bg-sky-700 text-white"
+              >
+                <Beaker className="w-4 h-4 mr-2" />
+                {isTesting ? "Testing..." : "Test"}
+              </Button>
             </div>
+
+            {testResponse && (
+              <div className="space-y-2 pt-4">
+                <Label htmlFor="test-response" className="text-white">Test Response</Label>
+                <Textarea
+                  id="test-response"
+                  readOnly
+                  value={testResponse}
+                  className="mt-2 h-64 font-mono text-sm bg-slate-900/80 border-slate-600 text-green-400"
+                  placeholder="Test response will appear here..."
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
+       {/* ... existing Progress and Anti-Detect cards ... */}
       <div className="space-y-6">
         <Card className="bg-slate-800/50 border-slate-700">
           <CardHeader>
@@ -474,7 +533,7 @@ export const AutoFillForm = ({
                 onCheckedChange={(checked) =>
                   setAntiDetect((prev) => ({ ...prev, showBrowser: checked }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
@@ -498,7 +557,7 @@ export const AutoFillForm = ({
                     useMyScreenResolution: checked,
                   }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
@@ -518,7 +577,7 @@ export const AutoFillForm = ({
                   size="icon"
                   variant="ghost"
                   onClick={() => setSessionData(null)}
-                  disabled={!sessionData || isRunning}
+                  disabled={!sessionData || isRunning || isTesting}
                   className="h-7 w-7 text-red-400 hover:bg-red-900/50"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -532,7 +591,7 @@ export const AutoFillForm = ({
                       persistentSession: checked,
                     }))
                   }
-                  disabled={isRunning}
+                  disabled={isRunning || isTesting}
                 />
               </div>
             </div>
@@ -559,7 +618,7 @@ export const AutoFillForm = ({
                     spoofTimezone: checked,
                   }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
 
@@ -585,7 +644,7 @@ export const AutoFillForm = ({
                     spoofGeolocation: checked,
                   }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
 
@@ -609,7 +668,7 @@ export const AutoFillForm = ({
                 onCheckedChange={(checked) =>
                   setAntiDetect((prev) => ({ ...prev, spoofCanvas: checked }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
 
@@ -634,7 +693,7 @@ export const AutoFillForm = ({
                     randomizeTimings: checked,
                   }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
@@ -655,7 +714,7 @@ export const AutoFillForm = ({
                 onCheckedChange={(checked) =>
                   setAntiDetect((prev) => ({ ...prev, simulateMouse: checked }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
@@ -679,7 +738,7 @@ export const AutoFillForm = ({
                     disguiseFingerprint: checked,
                   }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
@@ -697,7 +756,7 @@ export const AutoFillForm = ({
                 onCheckedChange={(checked) =>
                   setAntiDetect((prev) => ({ ...prev, disableWebRTC: checked }))
                 }
-                disabled={isRunning}
+                disabled={isRunning || isTesting}
               />
             </div>
           </CardContent>

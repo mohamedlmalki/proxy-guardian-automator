@@ -543,6 +543,241 @@ app.post('/api/auto-fill', async (req, res) => {
   }
 });
 
+// START: NEW Test Endpoint
+app.post('/api/test-fill', async (req, res) => {
+    const { email, targetUrl, proxy, selectors, antiDetect, screen, timezone, latitude, longitude } = req.body;
+  
+    console.log('\n\n--- NEW TEST-FILL REQUEST ---');
+    console.log(`[INFO] Received request to TEST form for: ${email} at ${targetUrl}`);
+    console.log(`[INFO] Anti-detect settings:`, antiDetect);
+  
+    if (!email || !targetUrl || !selectors) {
+      return res.status(400).json({ success: false, message: 'Missing required parameters' });
+    }
+  
+    let browser;
+    try {
+      const browserArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        '--window-position=0,0'
+      ];
+  
+      if (proxy) {
+          const proxyType = getTypeFromPort(proxy);
+          if (proxyType.startsWith('SOCKS')) {
+            browserArgs.push(`--proxy-server=socks5://${proxy}`);
+          } else {
+            browserArgs.push(`--proxy-server=http://${proxy}`);
+          }
+      }
+      
+      if (antiDetect?.disableWebRTC) {
+          browserArgs.push('--disable-webrtc');
+      }
+  
+      // NOTE: Persistent session is ignored for tests to ensure a clean slate.
+      browser = await puppeteer.launch({
+        headless: !(antiDetect && antiDetect.showBrowser),
+        args: browserArgs,
+      });
+  
+      const page = await browser.newPage();
+      
+      const cursorId = `cursor-${Math.random().toString(36).substring(2, 9)}`;
+      if (antiDetect?.showBrowser && antiDetect?.simulateMouse) {
+        await installMouseHelper(page, cursorId);
+      }
+      
+      if (antiDetect?.spoofCanvas) {
+          await page.evaluateOnNewDocument(() => {
+              const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+              const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+  
+              const addNoise = (canvas) => {
+                  const ctx = canvas.getContext('2d');
+                  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                  const data = imageData.data;
+                  for (let i = 0; i < data.length; i += 4) {
+                      const noise = Math.floor((Math.random() - 0.5) * 20);
+                      data[i] = Math.max(0, Math.min(255, data[i] + noise));
+                      data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+                      data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+                  }
+                  ctx.putImageData(imageData, 0, 0);
+              };
+  
+              HTMLCanvasElement.prototype.toDataURL = function() {
+                  const tempCanvas = document.createElement('canvas');
+                  tempCanvas.width = this.width;
+                  tempCanvas.height = this.height;
+                  const tempCtx = tempCanvas.getContext('2d');
+                  tempCtx.drawImage(this, 0, 0);
+                  addNoise(tempCanvas);
+                  return originalToDataURL.apply(tempCanvas, arguments);
+              };
+  
+              CanvasRenderingContext2D.prototype.getImageData = function() {
+                  const imageData = originalGetImageData.apply(this, arguments);
+                  const data = imageData.data;
+                   for (let i = 0; i < data.length; i += 4) {
+                      const noise = Math.floor((Math.random() - 0.5) * 20);
+                      data[i] = Math.max(0, Math.min(255, data[i] + noise));
+                      data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+                      data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+                  }
+                  return imageData;
+              };
+          });
+      }
+      
+      if (antiDetect?.spoofGeolocation && typeof latitude === 'number' && typeof longitude === 'number') {
+          await page.setGeolocation({ latitude, longitude });
+      }
+  
+      if (antiDetect?.spoofTimezone && timezone) {
+          await page.emulateTimezone(timezone);
+      }
+  
+      if (antiDetect?.disguiseFingerprint) {
+        const profile = FINGERPRINT_PROFILES[Math.floor(Math.random() * FINGERPRINT_PROFILES.length)];
+        await page.setUserAgent(profile.userAgent);
+        
+        await page.evaluateOnNewDocument((p) => {
+            Object.defineProperty(navigator, 'platform', { get: () => p.platform });
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => p.hardwareConcurrency });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => p.deviceMemory });
+            Object.defineProperty(navigator, 'plugins', { get: () => p.plugins });
+            
+            const originalFontCheck = document.fonts.check;
+            document.fonts.check = function(font) {
+                return p.fonts.some(f => font.toLowerCase().includes(f.toLowerCase()));
+            };
+  
+        }, { 
+            platform: profile.platform, 
+            hardwareConcurrency: profile.hardwareConcurrency, 
+            deviceMemory: profile.deviceMemory,
+            plugins: profile.plugins,
+            fonts: profile.fonts.sort(() => 0.5 - Math.random()).slice(0, Math.floor(Math.random() * 5) + 10)
+        });
+          
+        const viewport = (profile.type === 'desktop' && screen && antiDetect.useMyScreenResolution) 
+            ? { width: screen.width, height: screen.height } 
+            : profile.resolution;
+  
+        const client = await page.target().createCDPSession();
+        await client.send('Emulation.setDeviceMetricsOverride', {
+          width: viewport.width,
+          height: viewport.height,
+          deviceScaleFactor: profile.type === 'phone' ? 2 : 1,
+          mobile: profile.type === 'phone',
+          screenWidth: viewport.width,
+          screenHeight: viewport.height,
+          platform: profile.platform.includes('Win') ? 'Windows' : profile.platform.includes('Mac') ? 'macOS' : 'Linux',
+        });
+      }
+  
+      await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+  
+      if (selectors.cookieSelector) {
+          try {
+              await page.waitForSelector(selectors.cookieSelector, { visible: true, timeout: 7000 });
+              await page.click(selectors.cookieSelector);
+              await page.waitForFunction((selector) => !document.querySelector(selector), { timeout: 5000 }, selectors.cookieSelector);
+          } catch (e) {
+              console.log("Cookie banner not found or did not disappear. Continuing...");
+          }
+      }
+  
+      const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * (150 - 50 + 1) + 50) : 0;
+  
+      await page.type(selectors.emailSelector, email, { delay: typingDelay });
+  
+      try {
+          await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
+          
+          if (antiDetect?.simulateMouse) {
+              const element = await page.$(selectors.submitSelector);
+              if (element) {
+                  const box = await element.boundingBox();
+                  if (box) {
+                      const targetX = box.x + (box.width * (Math.random() * 0.4 + 0.3));
+                      const targetY = box.y + (box.height * (Math.random() * 0.4 + 0.3));
+  
+                      if (antiDetect.showBrowser) {
+                          await page.evaluate(({ id, x, y }) => {
+                              const cursor = document.getElementById(id);
+                              if (cursor) {
+                                  cursor.style.transition = 'top 0.3s ease-in-out, left 0.3s ease-in-out';
+                                  cursor.style.left = `${x}px`;
+                                  cursor.style.top = `${y}px`;
+                              }
+                          }, { id: cursorId, x: targetX, y: targetY });
+                          await sleep(400); 
+                      }
+  
+                      await page.mouse.move(targetX, targetY, { steps: 15 });
+                      await sleep(Math.random() * 150 + 50);
+                      await page.mouse.click(targetX, targetY);
+  
+                  } else {
+                      await page.click(selectors.submitSelector);
+                  }
+              } else {
+                  throw new Error(`Could not find element with selector: ${selectors.submitSelector}`);
+              }
+          } else {
+              await page.click(selectors.submitSelector);
+          }
+          
+          await sleep(3000); // Wait for navigation/response
+      } catch (error) {
+          await page.screenshot({ path: path.join(screenshotsDir, 'error_on_test_submit.png') });
+          const errorMessage = error.message.includes(selectors.submitSelector) 
+              ? error.message 
+              : `Could not find or click submit button. Error: ${error.message}`;
+          throw new Error(errorMessage);
+      }
+  
+      const sourceContent = await page.content();
+  
+      res.json({
+        success: true,
+        message: `Test submission completed. Returning server response.`,
+        sourceContent: sourceContent,
+      });
+  
+    } catch (error) {
+      let errorSourceContent = null;
+      if (browser) {
+          try {
+              const pages = await browser.pages();
+              if (pages.length > 0) {
+                  errorSourceContent = await pages[pages.length - 1].content();
+              }
+          } catch (contentError) {
+               console.error("Could not get page content on error:", contentError.message);
+          }
+      }
+      res.status(500).json({
+          success: false,
+          message: error.message || 'Test submission failed',
+          sourceContent: errorSourceContent
+      });
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
+});
+// END: NEW Test Endpoint
+
 // Endpoint for the IP Tester
 app.post('/api/custom-test', async (req, res) => {
   const { proxy, targetUrl } = req.body;
