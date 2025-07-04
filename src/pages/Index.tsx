@@ -36,6 +36,8 @@ export interface ValidProxy {
   isPinned?: boolean;
   lastChecked?: number;
   timezone?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface SessionData {
@@ -144,7 +146,7 @@ const Index = () => {
   const [sessionSummary, setSessionSummary] = useState<SessionSummaryData | null>(null);
   const [isSummaryDialogOpen, setIsSummaryDialogOpen] = useState(false);
   const [isAutoFillComplete, setIsAutoFillComplete] = useState(false);
-  const [antiDetect, setAntiDetect] = useState<AntiDetectSettings>({ randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false });
+  const [antiDetect, setAntiDetect] = useState<AntiDetectSettings>({ randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false });
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
 
   useEffect(() => { if (isAutoFillComplete) { calculateAndShowSummary(); setIsAutoFillComplete(false); } }, [isAutoFillComplete]);
@@ -206,7 +208,7 @@ const Index = () => {
     setDelay(profileData.delay ?? 2);
     setSelectors(profileData.selectors ?? { emailSelector: '', submitSelector: '' });
     setSuccessKeyword(profileData.successKeyword ?? "");
-    setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false });
+    setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false });
     setSelectedProfile(profileName);
     toast({ title: "Profile Loaded", description: `Loaded profile "${profileName}".` });
   };
@@ -482,7 +484,9 @@ const Index = () => {
             successKeyword, 
             antiDetect, 
             sessionData, 
-            timezone: currentActiveProxy?.timezone 
+            timezone: currentActiveProxy?.timezone,
+            latitude: currentActiveProxy?.latitude,
+            longitude: currentActiveProxy?.longitude
         };
         
         if (antiDetect.useMyScreenResolution) { requestBody.screen = { width: window.screen.width, height: window.screen.height }; }

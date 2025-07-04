@@ -44,7 +44,7 @@ export interface FormSelectors {
   cookieSelector?: string;
 }
 
-// MODIFIED: Added spoofTimezone
+// MODIFIED: Added spoofGeolocation
 export interface AntiDetectSettings {
   randomizeTimings: boolean;
   simulateMouse: boolean;
@@ -53,12 +53,13 @@ export interface AntiDetectSettings {
   persistentSession: boolean;
   disableWebRTC: boolean;
   useMyScreenResolution?: boolean;
-  spoofTimezone: boolean; // NEW
+  spoofTimezone: boolean;
+  spoofGeolocation: boolean; // NEW
 }
 
 interface AutoFillFormProps {
   activeProxy: ValidProxy | null;
-  onStartAutoFill: (selectors: FormSelectors) => void;
+  onStartAutoFill: () => void; // Removed selectors from here as it's part of the component's state
   onStopAutoFill: () => void;
   isRunning: boolean;
   progress: number;
@@ -113,7 +114,7 @@ export const AutoFillForm = ({
     .filter((line) => line.length > 0 && line.includes("@"));
 
   const handleStartClick = () => {
-    onStartAutoFill(selectors);
+    onStartAutoFill();
   };
 
   const isStartDisabled = () => {
@@ -535,14 +536,13 @@ export const AutoFillForm = ({
               </div>
             </div>
             
-            {/* --- NEW: Spoof Timezone --- */}
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
               <div className="space-y-0.5">
                 <Label
                   htmlFor="spoof-timezone"
                   className="text-base text-white flex items-center gap-2"
                 >
-                  <Globe2 className="w-4 h-4" />
+                  <Clock className="w-4 h-4" />
                   Spoof Timezone
                 </Label>
                 <p className="text-xs text-gray-400">
@@ -561,7 +561,32 @@ export const AutoFillForm = ({
                 disabled={isRunning}
               />
             </div>
-            {/* --- END NEW --- */}
+
+            <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
+              <div className="space-y-0.5">
+                <Label
+                  htmlFor="spoof-geolocation"
+                  className="text-base text-white flex items-center gap-2"
+                >
+                  <Globe2 className="w-4 h-4" />
+                  Spoof Geolocation
+                </Label>
+                <p className="text-xs text-gray-400">
+                  Match browser coordinates to the proxy's location.
+                </p>
+              </div>
+              <Switch
+                id="spoof-geolocation"
+                checked={antiDetect.spoofGeolocation}
+                onCheckedChange={(checked) =>
+                  setAntiDetect((prev) => ({
+                    ...prev,
+                    spoofGeolocation: checked,
+                  }))
+                }
+                disabled={isRunning}
+              />
+            </div>
 
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
               <div className="space-y-0.5">

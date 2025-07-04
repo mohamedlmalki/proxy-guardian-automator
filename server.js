@@ -188,7 +188,6 @@ app.post('/api/check-proxy', async (req, res) => {
             };
         } else {
             const ipAddress = proxy.split(':')[0];
-            // ** Fetch lat and lon from the API **
             const geoResponse = await axios.get(`http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,city,isp,as,timezone,lat,lon`);
             if (geoResponse.data.status === 'success') {
                 finalGeoData = {
@@ -252,14 +251,12 @@ app.post('/api/test-connection', async (req, res) => {
 });
 
 // Endpoint for the Auto Filler
-// ** Added latitude and longitude to the destructured request body **
 app.post('/api/auto-fill', async (req, res) => {
   const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen, timezone, latitude, longitude } = req.body;
 
   console.log('\n\n--- NEW AUTO-FILL REQUEST ---');
   console.log(`[INFO] Received request to fill form for: ${email} at ${targetUrl}`);
   console.log(`[INFO] Spoofing Timezone: ${timezone}`);
-  // ** Log the geolocation being spoofed **
   console.log(`[INFO] Spoofing Geolocation: Lat ${latitude}, Lon ${longitude}`);
   console.log(`[INFO] Anti-detect settings:`, antiDetect);
 
@@ -309,9 +306,14 @@ app.post('/api/auto-fill', async (req, res) => {
 
     const page = await browser.newPage();
     
-    // ** Set Geolocation before emulating timezone **
-    if (antiDetect?.spoofGeolocation && latitude && longitude) {
-        await page.setGeolocation({ latitude, longitude });
+    // MODIFIED: Added a check to ensure latitude and longitude are valid numbers
+    if (antiDetect?.spoofGeolocation && typeof latitude === 'number' && typeof longitude === 'number') {
+        try {
+            await page.setGeolocation({ latitude, longitude });
+            console.log(`[SUCCESS] Geolocation spoofed to: Lat ${latitude}, Lon ${longitude}`);
+        } catch (geoError) {
+            console.error(`[ERROR] Failed to set geolocation: ${geoError.message}`);
+        }
     }
 
     if (antiDetect?.spoofTimezone && timezone) {
