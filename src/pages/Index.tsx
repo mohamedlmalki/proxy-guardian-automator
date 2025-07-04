@@ -146,7 +146,7 @@ const Index = () => {
   const [sessionSummary, setSessionSummary] = useState<SessionSummaryData | null>(null);
   const [isSummaryDialogOpen, setIsSummaryDialogOpen] = useState(false);
   const [isAutoFillComplete, setIsAutoFillComplete] = useState(false);
-  const [antiDetect, setAntiDetect] = useState<AntiDetectSettings>({ randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false });
+  const [antiDetect, setAntiDetect] = useState<AntiDetectSettings>({ randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false, spoofCanvas: false });
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
 
   useEffect(() => { if (isAutoFillComplete) { calculateAndShowSummary(); setIsAutoFillComplete(false); } }, [isAutoFillComplete]);
@@ -208,7 +208,7 @@ const Index = () => {
     setDelay(profileData.delay ?? 2);
     setSelectors(profileData.selectors ?? { emailSelector: '', submitSelector: '' });
     setSuccessKeyword(profileData.successKeyword ?? "");
-    setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false });
+    setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false, spoofCanvas: false });
     setSelectedProfile(profileName);
     toast({ title: "Profile Loaded", description: `Loaded profile "${profileName}".` });
   };

@@ -123,6 +123,33 @@ const getErrorMessage = (error) => {
     return error.message;
 };
 
+const installMouseHelper = async (page, cursorId) => {
+  await page.evaluateOnNewDocument((id) => {
+    const cursor = document.createElement('div');
+    cursor.id = id;
+    cursor.style.position = 'fixed';
+    cursor.style.zIndex = '2147483647';
+    cursor.style.width = '20px';
+    cursor.style.height = '20px';
+    cursor.style.background = 'rgba(255,0,0,0.5)';
+    cursor.style.borderRadius = '50%';
+    cursor.style.border = '1px solid white';
+    cursor.style.pointerEvents = 'none';
+    cursor.style.left = '0px';
+    cursor.style.top = '0px';
+    if (document.body) {
+      document.body.appendChild(cursor);
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        if (document.body) {
+          document.body.appendChild(cursor);
+        }
+      });
+    }
+  }, cursorId);
+};
+
+
 // Endpoint for the Proxy Checker
 app.post('/api/check-proxy', async (req, res) => {
     const { proxy, checkCount = 1, expectedString, provider, targetUrl } = req.body;
@@ -256,8 +283,6 @@ app.post('/api/auto-fill', async (req, res) => {
 
   console.log('\n\n--- NEW AUTO-FILL REQUEST ---');
   console.log(`[INFO] Received request to fill form for: ${email} at ${targetUrl}`);
-  console.log(`[INFO] Spoofing Timezone: ${timezone}`);
-  console.log(`[INFO] Spoofing Geolocation: Lat ${latitude}, Lon ${longitude}`);
   console.log(`[INFO] Anti-detect settings:`, antiDetect);
 
   if (!email || !targetUrl || !selectors) {
@@ -286,17 +311,13 @@ app.post('/api/auto-fill', async (req, res) => {
         }
     }
     
-    if (antiDetect) {
-        if (antiDetect.disableWebRTC) {
-            browserArgs.push('--disable-webrtc');
-        }
+    if (antiDetect?.disableWebRTC) {
+        browserArgs.push('--disable-webrtc');
     }
 
     const sessionPath = (antiDetect?.persistentSession && sessionData?.id)
         ? path.join(sessionsDir, sessionData.id)
         : undefined;
-
-    console.log('[INFO] Launching browser with args:', browserArgs);
 
     browser = await puppeteer.launch({
       headless: !(antiDetect && antiDetect.showBrowser),
@@ -306,21 +327,68 @@ app.post('/api/auto-fill', async (req, res) => {
 
     const page = await browser.newPage();
     
-    // MODIFIED: Added a check to ensure latitude and longitude are valid numbers
+    const cursorId = `cursor-${Math.random().toString(36).substring(2, 9)}`;
+    if (antiDetect?.showBrowser && antiDetect?.simulateMouse) {
+      await installMouseHelper(page, cursorId);
+    }
+    
+    // START >> FINAL, CORRECTED CANVAS SPOOFING LOGIC
+    if (antiDetect?.spoofCanvas) {
+        await page.evaluateOnNewDocument(() => {
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+
+            // Define the noise function
+            const addNoise = (canvas) => {
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imageData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                    const noise = Math.floor((Math.random() - 0.5) * 20);
+                    data[i] = Math.max(0, Math.min(255, data[i] + noise));
+                    data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+                    data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+                }
+                ctx.putImageData(imageData, 0, 0);
+            };
+
+            // Override toDataURL
+            HTMLCanvasElement.prototype.toDataURL = function() {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = this.width;
+                tempCanvas.height = this.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(this, 0, 0); // Copy original canvas
+                addNoise(tempCanvas); // Add noise to the copy
+                return originalToDataURL.apply(tempCanvas, arguments); // Return noisy copy's data URL
+            };
+
+            // Override getImageData
+            CanvasRenderingContext2D.prototype.getImageData = function() {
+                const imageData = originalGetImageData.apply(this, arguments);
+                const data = imageData.data;
+                 for (let i = 0; i < data.length; i += 4) {
+                    const noise = Math.floor((Math.random() - 0.5) * 20);
+                    data[i] = Math.max(0, Math.min(255, data[i] + noise));
+                    data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+                    data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+                }
+                return imageData;
+            };
+        });
+        console.log('[SUCCESS] Corrected canvas spoofing enabled.');
+    }
+    // END >> FINAL, CORRECTED CANVAS SPOOFING LOGIC
+    
     if (antiDetect?.spoofGeolocation && typeof latitude === 'number' && typeof longitude === 'number') {
-        try {
-            await page.setGeolocation({ latitude, longitude });
-            console.log(`[SUCCESS] Geolocation spoofed to: Lat ${latitude}, Lon ${longitude}`);
-        } catch (geoError) {
-            console.error(`[ERROR] Failed to set geolocation: ${geoError.message}`);
-        }
+        await page.setGeolocation({ latitude, longitude });
     }
 
     if (antiDetect?.spoofTimezone && timezone) {
         await page.emulateTimezone(timezone);
     }
 
-    if (antiDetect && antiDetect.disguiseFingerprint) {
+    if (antiDetect?.disguiseFingerprint) {
       const profile = FINGERPRINT_PROFILES[Math.floor(Math.random() * FINGERPRINT_PROFILES.length)];
       await page.setUserAgent(profile.userAgent);
       
@@ -355,7 +423,7 @@ app.post('/api/auto-fill', async (req, res) => {
         mobile: profile.type === 'phone',
         screenWidth: viewport.width,
         screenHeight: viewport.height,
-        platform: profile.platform.includes('Win') ? 'Windows' : profile.platform.includes('Mac') ? 'macOS' : 'Linux', // More accurate emulation
+        platform: profile.platform.includes('Win') ? 'Windows' : profile.platform.includes('Mac') ? 'macOS' : 'Linux',
       });
     }
 
@@ -379,15 +447,46 @@ app.post('/api/auto-fill', async (req, res) => {
         await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
         
         if (antiDetect?.simulateMouse) {
-            await page.hover(selectors.submitSelector);
-            await sleep(Math.random() * 200 + 100);
+            const element = await page.$(selectors.submitSelector);
+            if (element) {
+                const box = await element.boundingBox();
+                if (box) {
+                    const targetX = box.x + (box.width * (Math.random() * 0.4 + 0.3));
+                    const targetY = box.y + (box.height * (Math.random() * 0.4 + 0.3));
+
+                    if (antiDetect.showBrowser) {
+                        await page.evaluate(({ id, x, y }) => {
+                            const cursor = document.getElementById(id);
+                            if (cursor) {
+                                cursor.style.transition = 'top 0.3s ease-in-out, left 0.3s ease-in-out';
+                                cursor.style.left = `${x}px`;
+                                cursor.style.top = `${y}px`;
+                            }
+                        }, { id: cursorId, x: targetX, y: targetY });
+                        await sleep(400); 
+                    }
+
+                    await page.mouse.move(targetX, targetY, { steps: 15 });
+                    await sleep(Math.random() * 150 + 50);
+                    await page.mouse.click(targetX, targetY);
+
+                } else {
+                    await page.click(selectors.submitSelector);
+                }
+            } else {
+                throw new Error(`Could not find element with selector: ${selectors.submitSelector}`);
+            }
+        } else {
+            await page.click(selectors.submitSelector);
         }
         
-        await page.$eval(selectors.submitSelector, button => button.click());
         await sleep(3000);
     } catch (error) {
         await page.screenshot({ path: path.join(screenshotsDir, 'error_on_submit.png') });
-        throw new Error(`Could not find or click submit button with selector: ${selectors.submitSelector}`);
+        const errorMessage = error.message.includes(selectors.submitSelector) 
+            ? error.message 
+            : `Could not find or click submit button. Error: ${error.message}`;
+        throw new Error(errorMessage);
     }
 
     let successMessage = `Successfully submitted form for ${email}.`;

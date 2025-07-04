@@ -28,9 +28,10 @@ import {
   Cookie,
   Trash2,
   Monitor,
-  MousePointer, // Added icon
-  Clock, // Added icon
-  Globe2, // Added icon
+  MousePointer,
+  Clock,
+  Globe2,
+  Fingerprint, // Added icon
 } from "lucide-react";
 import { ValidProxy, SessionData } from "@/pages/Index";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -44,7 +45,6 @@ export interface FormSelectors {
   cookieSelector?: string;
 }
 
-// MODIFIED: Added spoofGeolocation
 export interface AntiDetectSettings {
   randomizeTimings: boolean;
   simulateMouse: boolean;
@@ -54,12 +54,13 @@ export interface AntiDetectSettings {
   disableWebRTC: boolean;
   useMyScreenResolution?: boolean;
   spoofTimezone: boolean;
-  spoofGeolocation: boolean; // NEW
+  spoofGeolocation: boolean;
+  spoofCanvas: boolean; // NEW
 }
 
 interface AutoFillFormProps {
   activeProxy: ValidProxy | null;
-  onStartAutoFill: () => void; // Removed selectors from here as it's part of the component's state
+  onStartAutoFill: () => void;
   onStopAutoFill: () => void;
   isRunning: boolean;
   progress: number;
@@ -583,6 +584,30 @@ export const AutoFillForm = ({
                     ...prev,
                     spoofGeolocation: checked,
                   }))
+                }
+                disabled={isRunning}
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-slate-900/50">
+              <div className="space-y-0.5">
+                <Label
+                  htmlFor="spoof-canvas"
+                  className="text-base text-white flex items-center gap-2"
+                >
+                  <Fingerprint className="w-4 h-4" />
+                  Spoof Canvas
+                </Label>
+                <p className="text-xs text-gray-400">
+                  Adds random noise to canvas rendering to prevent
+                  fingerprinting.
+                </p>
+              </div>
+              <Switch
+                id="spoof-canvas"
+                checked={antiDetect.spoofCanvas}
+                onCheckedChange={(checked) =>
+                  setAntiDetect((prev) => ({ ...prev, spoofCanvas: checked }))
                 }
                 disabled={isRunning}
               />
