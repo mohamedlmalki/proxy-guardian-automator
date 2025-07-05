@@ -7,13 +7,20 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
-  FormInput,
+  FormInput as FormInputIcon,
   Play,
   Pause,
   Mail,
@@ -28,12 +35,25 @@ import {
   Clock,
   Globe2,
   Fingerprint,
-  Beaker, // Icon for Test button
+  Beaker,
+  PlusCircle,
+  XCircle,
+  ChevronDown,
 } from "lucide-react";
 import { ValidProxy, SessionData } from "@/pages/Index";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { Switch } from "./ui/switch";
 
+export interface FormInput {
+  selector: string;
+  value: string;
+}
+
+export interface AutomationStep {
+  targetUrl: string;
+  fields: FormInput[];
+  buttonSelector: string;
+}
 export interface FormSelectors {
   emailSelector: string;
   submitSelector: string;
@@ -79,7 +99,18 @@ interface AutoFillFormProps {
   setAntiDetect: Dispatch<SetStateAction<AntiDetectSettings>>;
   sessionData: SessionData | null;
   setSessionData: Dispatch<SetStateAction<SessionData | null>>;
+  steps: AutomationStep[];
+  setSteps: Dispatch<SetStateAction<AutomationStep[]>>;
 }
+
+const FIELD_TYPES = [
+  { label: 'Email', value: 'input[type="email"], input[name="email"], #email', placeholder: '{email}' },
+  { label: 'First Name', value: 'input[name="fname"], input[name="first_name"], #fname', placeholder: '' },
+  { label: 'Last Name', value: 'input[name="lname"], input[name="last_name"], #lname', placeholder: '' },
+  { label: 'Full Name', value: 'input[name="name"], #name', placeholder: '' },
+  { label: 'Phone Number', value: 'input[type="tel"], input[name="phone"], #phone', placeholder: '' },
+  { label: 'Custom...', value: 'custom', placeholder: '' },
+];
 
 export const AutoFillForm = ({
   activeProxy,
@@ -105,6 +136,8 @@ export const AutoFillForm = ({
   setAntiDetect,
   sessionData,
   setSessionData,
+  steps,
+  setSteps,
 }: AutoFillFormProps) => {
   const [testResponse, setTestResponse] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
@@ -133,10 +166,9 @@ export const AutoFillForm = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: firstEmail,
-          targetUrl,
           proxy: autoFillMode === 'switcher' ? activeProxy?.proxy : null,
-          selectors,
           antiDetect,
+          steps,
         }),
       });
 
@@ -155,9 +187,53 @@ export const AutoFillForm = ({
 
   const isStartDisabled = () => {
     if (isRunning || isTesting) return true;
-    if (emails.length === 0 || !targetUrl) return true;
+    if (emails.length === 0 || !steps.some(step => step.targetUrl)) return true;
     if (autoFillMode === "switcher" && !activeProxy) return true;
     return false;
+  };
+  
+  const addStep = () => {
+    setSteps([...steps, { targetUrl: "", fields: [{ selector: "", value: "" }], buttonSelector: "" }]);
+  };
+
+  const removeStep = (stepIndex: number) => {
+    const newSteps = steps.filter((_, index) => index !== stepIndex);
+    setSteps(newSteps);
+  };
+
+  const addField = (stepIndex: number) => {
+    const newSteps = [...steps];
+    newSteps[stepIndex].fields.push({ selector: "", value: "" });
+    setSteps(newSteps);
+  };
+
+  const removeField = (stepIndex: number, fieldIndex: number) => {
+    const newSteps = [...steps];
+    newSteps[stepIndex].fields = newSteps[stepIndex].fields.filter((_, index) => index !== fieldIndex);
+    setSteps(newSteps);
+  };
+
+  const handleStepChange = (stepIndex: number, field: keyof AutomationStep, value: any) => {
+    const newSteps = [...steps];
+    newSteps[stepIndex] = { ...newSteps[stepIndex], [field]: value };
+    setSteps(newSteps);
+  };
+
+  const handleFieldChange = (stepIndex: number, fieldIndex: number, field: keyof FormInput, value: string) => {
+    const newSteps = [...steps];
+    newSteps[stepIndex].fields[fieldIndex] = { ...newSteps[stepIndex].fields[fieldIndex], [field]: value };
+    setSteps(newSteps);
+  };
+
+  const handleFieldTypeChange = (stepIndex: number, fieldIndex: number, selectorValue: string) => {
+    const newSteps = [...steps];
+    const fieldType = FIELD_TYPES.find(f => f.value === selectorValue);
+    newSteps[stepIndex].fields[fieldIndex] = {
+      ...newSteps[stepIndex].fields[fieldIndex],
+      selector: selectorValue,
+      value: fieldType?.placeholder || '',
+    };
+    setSteps(newSteps);
   };
 
   return (
@@ -166,7 +242,7 @@ export const AutoFillForm = ({
         <Card className="bg-slate-800/50 border-slate-700">
           <CardHeader>
             <CardTitle className="flex items-center space-x-2 text-white">
-              <FormInput className="w-5 h-5 text-green-400" />
+              <FormInputIcon className="w-5 h-5 text-green-400" />
               <span>Auto-Fill Configuration</span>
             </CardTitle>
             <CardDescription className="text-gray-400">
@@ -175,7 +251,6 @@ export const AutoFillForm = ({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* ... existing form fields ... */}
             <div className="space-y-3">
               <Label className="text-white">Proxy Mode</Label>
               <RadioGroup
@@ -248,18 +323,72 @@ export const AutoFillForm = ({
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label htmlFor="targetUrl" className="text-white">
-                Target URL
-              </Label>
-              <Input
-                id="targetUrl"
-                placeholder="https://example.com/signup"
-                value={targetUrl}
-                onChange={(e) => setTargetUrl(e.target.value)}
-                disabled={isRunning || isTesting}
-                className="bg-slate-900/50 border-slate-600 text-white"
-              />
+            <div className="space-y-4">
+              <Label className="text-white">Automation Steps</Label>
+              {steps.map((step, stepIndex) => (
+                <div key={stepIndex} className="p-4 border border-slate-600 rounded-lg space-y-3">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-white">Step {stepIndex + 1}</Label>
+                    <Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeStep(stepIndex)}>
+                      <XCircle className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <Input
+                    placeholder="Target URL for this step (optional)"
+                    value={step.targetUrl}
+                    onChange={(e) => handleStepChange(stepIndex, 'targetUrl', e.target.value)}
+                    disabled={isRunning || isTesting}
+                    className="bg-slate-900/50 border-slate-600 text-white text-xs"
+                  />
+                  {step.fields.map((field, fieldIndex) => (
+                    <div key={fieldIndex} className="flex gap-2">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" className="w-full justify-between bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700 hover:text-white">
+                            {FIELD_TYPES.find(f => f.value === field.selector)?.label || 'Select Field'} <ChevronDown className="w-4 h-4 opacity-50"/>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="bg-slate-800 border-slate-700 text-white">
+                          <DropdownMenuRadioGroup value={field.selector} onValueChange={(value) => handleFieldTypeChange(stepIndex, fieldIndex, value)}>
+                            {FIELD_TYPES.map(f => <DropdownMenuRadioItem key={f.value} value={f.value}>{f.label}</DropdownMenuRadioItem>)}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      {field.selector === 'custom' && (
+                        <Input
+                            placeholder="Custom Selector"
+                            onChange={(e) => handleFieldChange(stepIndex, fieldIndex, 'selector', e.target.value)}
+                            disabled={isRunning || isTesting}
+                            className="bg-slate-900/50 border-slate-600 text-white text-xs"
+                        />
+                      )}
+                      <Input
+                        placeholder="Value (use {email})"
+                        value={field.value}
+                        onChange={(e) => handleFieldChange(stepIndex, fieldIndex, 'value', e.target.value)}
+                        disabled={isRunning || isTesting}
+                        className="bg-slate-900/50 border-slate-600 text-white text-xs"
+                      />
+                      <Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeField(stepIndex, fieldIndex)}>
+                        <XCircle className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="outline" size="sm" onClick={() => addField(stepIndex)}>
+                    <PlusCircle className="w-4 h-4 mr-2" /> Add Field
+                  </Button>
+                  <Input
+                    placeholder="Button selector to click (e.g. #next, #submit)"
+                    value={step.buttonSelector}
+                    onChange={(e) => handleStepChange(stepIndex, 'buttonSelector', e.target.value)}
+                    disabled={isRunning || isTesting}
+                    className="bg-slate-900/50 border-slate-600 text-white text-xs"
+                  />
+                </div>
+              ))}
+              <Button variant="outline" onClick={addStep}>
+                <PlusCircle className="w-4 h-4 mr-2" /> Add Step
+              </Button>
             </div>
 
             <div className="space-y-2">
@@ -298,63 +427,6 @@ export const AutoFillForm = ({
                 disabled={isRunning || isTesting}
                 className="bg-slate-900/50 border-slate-600 text-white"
               />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-white">Form & Page Selectors</Label>
-              <div className="grid grid-cols-1 gap-2">
-                <Input
-                  placeholder="Email field selector"
-                  value={selectors.emailSelector}
-                  onChange={(e) =>
-                    setSelectors({ ...selectors, emailSelector: e.target.value })
-                  }
-                  disabled={isRunning || isTesting}
-                  className="bg-slate-900/50 border-slate-600 text-white text-xs"
-                />
-                <Input
-                  placeholder="Submit button selector"
-                  value={selectors.submitSelector}
-                  onChange={(e) =>
-                    setSelectors({
-                      ...selectors,
-                      submitSelector: e.target.value,
-                    })
-                  }
-                  disabled={isRunning || isTesting}
-                  className="bg-slate-900/50 border-slate-600 text-white text-xs"
-                />
-                <Input
-                  placeholder="Cookie Accept button selector (optional)"
-                  value={selectors.cookieSelector}
-                  onChange={(e) =>
-                    setSelectors({
-                      ...selectors,
-                      cookieSelector: e.target.value,
-                    })
-                  }
-                  disabled={isRunning || isTesting}
-                  className="bg-slate-900/50 border-slate-600 text-white text-xs"
-                />
-                <Input
-                  placeholder="Name field selector (optional)"
-                  value={selectors.nameSelector}
-                  onChange={(e) =>
-                    setSelectors({ ...selectors, nameSelector: e.target.value })
-                  }
-                  disabled={isRunning || isTesting}
-                  className="bg-slate-900/50 border-slate-600 text-white text-xs"
-                />
-                <Input
-                  placeholder="Phone field selector (optional)"
-                  value={selectors.phoneSelector}
-                  onChange={(e) =>
-                    setSelectors({ ...selectors, phoneSelector: e.target.value })
-                  }
-                  disabled={isRunning || isTesting}
-                  className="bg-slate-900/50 border-slate-600 text-white text-xs"
-                />
-              </div>
             </div>
 
             <div className="space-y-2">
@@ -496,7 +568,7 @@ export const AutoFillForm = ({
                   </div>
                 ) : (
                   <div className="space-y-3 text-gray-500">
-                    <FormInput className="w-12 h-12 mx-auto opacity-50" />
+                    <FormInputIcon className="w-12 h-12 mx-auto opacity-50" />
                     <p>Ready to start auto-fill</p>
                     <p className="text-xs">Configure settings and click Start</p>
                   </div>

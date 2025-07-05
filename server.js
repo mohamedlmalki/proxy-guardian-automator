@@ -279,13 +279,13 @@ app.post('/api/test-connection', async (req, res) => {
 
 // Endpoint for the Auto Filler
 app.post('/api/auto-fill', async (req, res) => {
-  const { email, targetUrl, proxy, selectors, antiDetect, successKeyword, sessionData, screen, timezone, latitude, longitude } = req.body;
+  const { email, proxy, selectors, antiDetect, successKeyword, sessionData, screen, timezone, latitude, longitude, steps } = req.body;
 
   console.log('\n\n--- NEW AUTO-FILL REQUEST ---');
-  console.log(`[INFO] Received request to fill form for: ${email} at ${targetUrl}`);
+  console.log(`[INFO] Received request to fill form for: ${email}`);
   console.log(`[INFO] Anti-detect settings:`, antiDetect);
 
-  if (!email || !targetUrl || !selectors) {
+  if (!email || !steps || steps.length === 0) {
     return res.status(400).json({ success: false, message: 'Missing required parameters' });
   }
 
@@ -426,67 +426,51 @@ app.post('/api/auto-fill', async (req, res) => {
         platform: profile.platform.includes('Win') ? 'Windows' : profile.platform.includes('Mac') ? 'macOS' : 'Linux',
       });
     }
-
-    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-
-    if (selectors.cookieSelector) {
-        try {
-            await page.waitForSelector(selectors.cookieSelector, { visible: true, timeout: 7000 });
-            await page.click(selectors.cookieSelector);
-            await page.waitForFunction((selector) => !document.querySelector(selector), { timeout: 5000 }, selectors.cookieSelector);
-        } catch (e) {
-            console.log("Cookie banner not found or did not disappear. Continuing...");
+    
+    let networkResponse = null;
+    page.on('response', async (response) => {
+        if (response.url().includes('/log')) { // Or a more specific URL
+            networkResponse = response;
         }
+    });
+
+    for (const step of steps) {
+      if (step.targetUrl) {
+        await page.goto(step.targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      }
+
+      if (selectors.cookieSelector) {
+          try {
+              await page.waitForSelector(selectors.cookieSelector, { visible: true, timeout: 7000 });
+              await page.click(selectors.cookieSelector);
+              await page.waitForFunction((selector) => !document.querySelector(selector), { timeout: 5000 }, selectors.cookieSelector);
+          } catch (e) {
+              console.log("Cookie banner not found or did not disappear. Continuing...");
+          }
+      }
+
+      const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * (150 - 50 + 1) + 50) : 0;
+
+      // This part now uses the fields from the current step
+      for (const field of step.fields) {
+          if (field.selector) {
+              await page.type(field.selector, field.value.replace('{email}', email), { delay: typingDelay });
+          }
+      }
+      
+      // Clicks the button for the current step
+      if (step.buttonSelector) {
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 5000 }).catch(() => console.log('No navigation after clicking button.')),
+            page.click(step.buttonSelector)
+          ]);
+      }
+      
+      await sleep(1000); // Wait for things to settle
     }
 
-    const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * (150 - 50 + 1) + 50) : 0;
-
-    await page.type(selectors.emailSelector, email, { delay: typingDelay });
-
-    try {
-        await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
-        
-        if (antiDetect?.simulateMouse) {
-            const element = await page.$(selectors.submitSelector);
-            if (element) {
-                const box = await element.boundingBox();
-                if (box) {
-                    const targetX = box.x + (box.width * (Math.random() * 0.4 + 0.3));
-                    const targetY = box.y + (box.height * (Math.random() * 0.4 + 0.3));
-
-                    if (antiDetect.showBrowser) {
-                        await page.evaluate(({ id, x, y }) => {
-                            const cursor = document.getElementById(id);
-                            if (cursor) {
-                                cursor.style.transition = 'top 0.3s ease-in-out, left 0.3s ease-in-out';
-                                cursor.style.left = `${x}px`;
-                                cursor.style.top = `${y}px`;
-                            }
-                        }, { id: cursorId, x: targetX, y: targetY });
-                        await sleep(400); 
-                    }
-
-                    await page.mouse.move(targetX, targetY, { steps: 15 });
-                    await sleep(Math.random() * 150 + 50);
-                    await page.mouse.click(targetX, targetY);
-
-                } else {
-                    await page.click(selectors.submitSelector);
-                }
-            } else {
-                throw new Error(`Could not find element with selector: ${selectors.submitSelector}`);
-            }
-        } else {
-            await page.click(selectors.submitSelector);
-        }
-        
-        await sleep(3000);
-    } catch (error) {
-        await page.screenshot({ path: path.join(screenshotsDir, 'error_on_submit.png') });
-        const errorMessage = error.message.includes(selectors.submitSelector) 
-            ? error.message 
-            : `Could not find or click submit button. Error: ${error.message}`;
-        throw new Error(errorMessage);
+    if (!networkResponse || !networkResponse.ok()) {
+        throw new Error('Network request to logging endpoint failed or was not detected.');
     }
 
     let successMessage = `Successfully submitted form for ${email}.`;
@@ -545,13 +529,13 @@ app.post('/api/auto-fill', async (req, res) => {
 
 // START: NEW Test Endpoint
 app.post('/api/test-fill', async (req, res) => {
-    const { email, targetUrl, proxy, selectors, antiDetect, screen, timezone, latitude, longitude } = req.body;
+    const { email, proxy, selectors, antiDetect, screen, timezone, latitude, longitude, steps } = req.body;
   
     console.log('\n\n--- NEW TEST-FILL REQUEST ---');
-    console.log(`[INFO] Received request to TEST form for: ${email} at ${targetUrl}`);
+    console.log(`[INFO] Received request to TEST form for: ${email}`);
     console.log(`[INFO] Anti-detect settings:`, antiDetect);
   
-    if (!email || !targetUrl || !selectors) {
+    if (!email || !steps || steps.length === 0) {
       return res.status(400).json({ success: false, message: 'Missing required parameters' });
     }
   
@@ -683,66 +667,25 @@ app.post('/api/test-fill', async (req, res) => {
         });
       }
   
-      await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      for (const step of steps) {
+        if (step.targetUrl) {
+          await page.goto(step.targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        }
   
-      if (selectors.cookieSelector) {
-          try {
-              await page.waitForSelector(selectors.cookieSelector, { visible: true, timeout: 7000 });
-              await page.click(selectors.cookieSelector);
-              await page.waitForFunction((selector) => !document.querySelector(selector), { timeout: 5000 }, selectors.cookieSelector);
-          } catch (e) {
-              console.log("Cookie banner not found or did not disappear. Continuing...");
+        const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * (150 - 50 + 1) + 50) : 0;
+  
+        for (const field of step.fields) {
+          if (field.selector && field.value) {
+            await page.type(field.selector, field.value.replace('{email}', email), { delay: typingDelay });
           }
-      }
+        }
   
-      const typingDelay = (antiDetect && antiDetect.randomizeTimings) ? Math.floor(Math.random() * (150 - 50 + 1) + 50) : 0;
-  
-      await page.type(selectors.emailSelector, email, { delay: typingDelay });
-  
-      try {
-          await page.waitForSelector(selectors.submitSelector, { visible: true, timeout: 10000 });
-          
-          if (antiDetect?.simulateMouse) {
-              const element = await page.$(selectors.submitSelector);
-              if (element) {
-                  const box = await element.boundingBox();
-                  if (box) {
-                      const targetX = box.x + (box.width * (Math.random() * 0.4 + 0.3));
-                      const targetY = box.y + (box.height * (Math.random() * 0.4 + 0.3));
-  
-                      if (antiDetect.showBrowser) {
-                          await page.evaluate(({ id, x, y }) => {
-                              const cursor = document.getElementById(id);
-                              if (cursor) {
-                                  cursor.style.transition = 'top 0.3s ease-in-out, left 0.3s ease-in-out';
-                                  cursor.style.left = `${x}px`;
-                                  cursor.style.top = `${y}px`;
-                              }
-                          }, { id: cursorId, x: targetX, y: targetY });
-                          await sleep(400); 
-                      }
-  
-                      await page.mouse.move(targetX, targetY, { steps: 15 });
-                      await sleep(Math.random() * 150 + 50);
-                      await page.mouse.click(targetX, targetY);
-  
-                  } else {
-                      await page.click(selectors.submitSelector);
-                  }
-              } else {
-                  throw new Error(`Could not find element with selector: ${selectors.submitSelector}`);
-              }
-          } else {
-              await page.click(selectors.submitSelector);
-          }
-          
-          await sleep(3000); // Wait for navigation/response
-      } catch (error) {
-          await page.screenshot({ path: path.join(screenshotsDir, 'error_on_test_submit.png') });
-          const errorMessage = error.message.includes(selectors.submitSelector) 
-              ? error.message 
-              : `Could not find or click submit button. Error: ${error.message}`;
-          throw new Error(errorMessage);
+        if (step.buttonSelector) {
+            await page.waitForSelector(step.buttonSelector, { visible: true, timeout: 10000 });
+            await page.click(step.buttonSelector);
+        }
+        
+        await sleep(3000); // Wait for navigation/response
       }
   
       const sourceContent = await page.content();

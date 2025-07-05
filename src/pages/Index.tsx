@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
 import { ProxyChecker } from "@/components/ProxyChecker";
 import { ProxySwitcher, RotationStrategy, SessionStat } from "@/components/ProxySwitcher";
-import { AutoFillForm, FormSelectors, AntiDetectSettings } from "@/components/AutoFillForm";
+import { AutoFillForm, FormSelectors, AntiDetectSettings, FormInput, AutomationStep } from "@/components/AutoFillForm";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { IpTester } from "@/components/IpTester";
 import { SessionSummaryDialog, SessionSummaryData } from "@/components/SessionSummaryDialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, RotateCcw, FormInput, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2, Hourglass, ListTodo, Timer as TimerIcon, X, XCircle } from "lucide-react";
+import { Shield, RotateCcw, FormInput as FormInputIcon, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2, Hourglass, ListTodo, Timer as TimerIcon, X, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -79,6 +79,7 @@ interface ProfileData {
     selectors: FormSelectors;
     successKeyword: string;
     antiDetect: AntiDetectSettings;
+    steps: AutomationStep[];
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -149,6 +150,14 @@ const Index = () => {
   const [antiDetect, setAntiDetect] = useState<AntiDetectSettings>({ randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false, spoofCanvas: false });
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
 
+  const [steps, setSteps] = useState<AutomationStep[]>([
+    {
+      fields: [{ selector: "", value: "" }],
+      buttonSelector: "",
+      targetUrl: "",
+    },
+  ]);
+
   useEffect(() => { if (isAutoFillComplete) { calculateAndShowSummary(); setIsAutoFillComplete(false); } }, [isAutoFillComplete]);
 
   const isSwitchingRef = useRef(false);
@@ -187,7 +196,7 @@ const Index = () => {
   const handleSaveProfile = () => {
     const profileName = prompt("Enter a name for this profile:");
     if (!profileName) return;
-    const newProfileData: ProfileData = { proxyInput, switchMode, rotationStrategy, switchInterval, switchRequestCount, emailData, targetUrl, delay, selectors, successKeyword, antiDetect };
+    const newProfileData: ProfileData = { proxyInput, switchMode, rotationStrategy, switchInterval, switchRequestCount, emailData, targetUrl, delay, selectors, successKeyword, antiDetect, steps };
     const updatedProfiles = { ...profiles, [profileName]: newProfileData };
     setProfiles(updatedProfiles);
     localStorage.setItem(PROFILES_KEY, JSON.stringify(updatedProfiles));
@@ -209,6 +218,7 @@ const Index = () => {
     setSelectors(profileData.selectors ?? { emailSelector: '', submitSelector: '' });
     setSuccessKeyword(profileData.successKeyword ?? "");
     setAntiDetect(profileData.antiDetect ?? { randomizeTimings: false, simulateMouse: false, disguiseFingerprint: false, showBrowser: false, persistentSession: false, disableWebRTC: false, useMyScreenResolution: false, spoofTimezone: false, spoofGeolocation: false, spoofCanvas: false });
+    setSteps(profileData.steps);
     setSelectedProfile(profileName);
     toast({ title: "Profile Loaded", description: `Loaded profile "${profileName}".` });
   };
@@ -486,7 +496,8 @@ const Index = () => {
             sessionData, 
             timezone: currentActiveProxy?.timezone,
             latitude: currentActiveProxy?.latitude,
-            longitude: currentActiveProxy?.longitude
+            longitude: currentActiveProxy?.longitude,
+            steps
         };
         
         if (antiDetect.useMyScreenResolution) { requestBody.screen = { width: window.screen.width, height: window.screen.height }; }
@@ -600,7 +611,7 @@ const Index = () => {
           <TabsList className="grid w-full grid-cols-5 bg-slate-800/50 border border-slate-700">
             <TabsTrigger value="checker" className="flex items-center space-x-2 data-[state=active]:bg-blue-600"><Shield className="w-4 h-4" /><span>Proxy Checker</span></TabsTrigger>
             <TabsTrigger value="switcher" className="flex items-center space-x-2 data-[state=active]:bg-purple-600"><RotateCcw className="w-4 h-4" /><span>Proxy Switcher</span></TabsTrigger>
-            <TabsTrigger value="autofill" className="flex items-center space-x-2 data-[state=active]:bg-green-600"><FormInput className="w-4 h-4" /><span>Auto Fill</span></TabsTrigger>
+            <TabsTrigger value="autofill" className="flex items-center space-x-2 data-[state=active]:bg-green-600"><FormInputIcon className="w-4 h-4" /><span>Auto Fill</span></TabsTrigger>
             <TabsTrigger value="ip-tester" className="flex items-center space-x-2 data-[state=active]:bg-lime-600"><TestTube2 className="w-4 h-4" /><span>IP Tester</span></TabsTrigger>
             <TabsTrigger value="analytics" className="flex items-center space-x-2 data-[state=active]:bg-orange-600"><PieChart className="w-4 h-4" /><span>Analytics</span></TabsTrigger>
           </TabsList>
@@ -634,7 +645,33 @@ const Index = () => {
             <ProxySwitcher validProxies={validProxies} onTestConnection={handleTestConnection} onReTestProxy={handleReTestProxy} onTempRemove={handleTempRemove} onReenableProxy={handleReenableProxy} testResult={null} connectionLog={connectionLog} onClearLog={handleClearConnectionLog} sessionStats={sessionStats} switcherStatus={switcherStatus} switchInterval={switchInterval} setSwitchInterval={setSwitchInterval} remainingTime={remainingTime} switchCount={switchCount} successfulRequests={successfulRequests} switchRequestCount={switchRequestCount} setSwitchRequestCount={setSwitchRequestCount} loopCount={loopCount} setLoopCount={setLoopCount} cooldownMinutes={cooldownMinutes} setCooldownMinutes={setCooldownMinutes} retestOnStart={retestOnStart} setRetestOnStart={setRetestOnStart} filterMode={filterMode} setFilterMode={setFilterMode} countryFilterList={countryFilterList} setCountryFilterList={setCountryFilterList} ispFilterList={ispFilterList} setIspFilterList={setIspFilterList} switchMode={switchMode} setSwitchMode={setSwitchMode} rotationStrategy={rotationStrategy} setRotationStrategy={setRotationStrategy} onStart={handleStartSwitcher} onStop={handleStopSwitcher} onPause={handlePauseSwitcher} onResume={handleResumeSwitcher} onManualSwitch={handleManualSwitch} onSendToTop={handleSendToTop} onResetDowned={handleResetDowned} currentProxyIndex={currentProxyIndex} downedProxies={downedProxies} manualRemovals={manualRemovals} />
           </TabsContent>
           <TabsContent value="autofill" className="space-y-6">
-            <AutoFillForm activeProxy={activeProxy} onStartAutoFill={handleStartAutoFill} onStopAutoFill={handleStopAutoFill} isRunning={isAutoFillRunning} progress={autoFillProgress} processedCount={processedCount} currentEmail={currentEmail} autoFillMode={autoFillMode} setAutoFillMode={setAutoFillMode} emailData={emailData} setEmailData={setEmailData} targetUrl={targetUrl} setTargetUrl={setTargetUrl} delay={delay} setDelay={setDelay} selectors={selectors} setSelectors={setSelectors} successKeyword={successKeyword} setSuccessKeyword={setSuccessKeyword} antiDetect={antiDetect} setAntiDetect={setAntiDetect} sessionData={sessionData} setSessionData={setSessionData} />
+            <AutoFillForm
+              activeProxy={activeProxy}
+              onStartAutoFill={handleStartAutoFill}
+              onStopAutoFill={handleStopAutoFill}
+              isRunning={isAutoFillRunning}
+              progress={autoFillProgress}
+              processedCount={processedCount}
+              currentEmail={currentEmail}
+              autoFillMode={autoFillMode}
+              setAutoFillMode={setAutoFillMode}
+              emailData={emailData}
+              setEmailData={setEmailData}
+              targetUrl={targetUrl}
+              setTargetUrl={setTargetUrl}
+              delay={delay}
+              setDelay={setDelay}
+              selectors={selectors}
+              setSelectors={setSelectors}
+              successKeyword={successKeyword}
+              setSuccessKeyword={setSuccessKeyword}
+              antiDetect={antiDetect}
+              setAntiDetect={setAntiDetect}
+              sessionData={sessionData}
+              setSessionData={setSessionData}
+              steps={steps}
+              setSteps={setSteps}
+            />
           </TabsContent>
           <TabsContent value="ip-tester" className="space-y-6">
             <IpTester activeProxy={activeProxy} onTestEndpoint={handleTestCustomEndpoint} />
