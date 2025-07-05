@@ -434,7 +434,7 @@ app.post('/api/auto-fill', async (req, res) => {
         }
     });
 
-    for (const step of steps) {
+    for (const [stepIndex, step] of steps.entries()) {
       if (step.targetUrl) {
         await page.goto(step.targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
       }
@@ -466,7 +466,29 @@ app.post('/api/auto-fill', async (req, res) => {
           ]);
       }
       
-      await sleep(1000); // Wait for things to settle
+      // --- NEW SMARTER WAITING LOGIC ---
+      // Instead of a fixed sleep, we wait for an element from the NEXT step to appear.
+      const nextStep = steps[stepIndex + 1];
+      if (nextStep) {
+          // Find the first valid selector from the next step's fields or its button
+          const selectorToWaitFor = 
+              nextStep.fields.find(f => f.selector)?.selector || 
+              nextStep.buttonSelector;
+
+          if (selectorToWaitFor) {
+              try {
+                  console.log(`Step ${stepIndex + 1} complete. Waiting for selector of next step: "${selectorToWaitFor}"`);
+                  await page.waitForSelector(selectorToWaitFor, { visible: true, timeout: 15000 });
+                  console.log("Selector found. Proceeding to next step.");
+              } catch (e) {
+                  console.warn(`Could not find selector for Step ${stepIndex + 2}. The page may not have loaded as expected. Continuing after a short delay.`);
+                  await sleep(2000); // Fallback sleep if selector not found
+              }
+          } else {
+              await sleep(1000); // Fallback if next step has no selectors
+          }
+      }
+      // --- END OF NEW LOGIC ---
     }
 
     if (!networkResponse || !networkResponse.ok()) {
@@ -667,7 +689,7 @@ app.post('/api/test-fill', async (req, res) => {
         });
       }
   
-      for (const step of steps) {
+      for (const [stepIndex, step] of steps.entries()) {
         if (step.targetUrl) {
           await page.goto(step.targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
         }
@@ -682,10 +704,33 @@ app.post('/api/test-fill', async (req, res) => {
   
         if (step.buttonSelector) {
             await page.waitForSelector(step.buttonSelector, { visible: true, timeout: 10000 });
-            await page.click(step.buttonSelector);
+            await Promise.all([
+              page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 5000 }).catch(() => console.log('No navigation detected, page likely updated dynamically.')),
+              page.click(step.buttonSelector)
+            ]);
         }
         
-        await sleep(3000); // Wait for navigation/response
+        // --- NEW SMARTER WAITING LOGIC ---
+        const nextStep = steps[stepIndex + 1];
+        if (nextStep) {
+            const selectorToWaitFor = 
+                nextStep.fields.find(f => f.selector)?.selector || 
+                nextStep.buttonSelector;
+
+            if (selectorToWaitFor) {
+                try {
+                    console.log(`Step ${stepIndex + 1} complete. Waiting for selector of next step: "${selectorToWaitFor}"`);
+                    await page.waitForSelector(selectorToWaitFor, { visible: true, timeout: 15000 });
+                    console.log("Selector found. Proceeding to next step.");
+                } catch (e) {
+                    console.warn(`Could not find selector for Step ${stepIndex + 2}. The page may not have loaded as expected. Continuing after a short delay.`);
+                    await sleep(2000);
+                }
+            } else {
+                await sleep(1000);
+            }
+        }
+        // --- END OF NEW LOGIC ---
       }
   
       const sourceContent = await page.content();

@@ -191,7 +191,7 @@ export const AutoFillForm = ({
     if (autoFillMode === "switcher" && !activeProxy) return true;
     return false;
   };
-  
+
   const addStep = () => {
     setSteps([...steps, { targetUrl: "", fields: [{ selector: "", value: "" }], buttonSelector: "" }]);
   };
@@ -329,17 +329,21 @@ export const AutoFillForm = ({
                 <div key={stepIndex} className="p-4 border border-slate-600 rounded-lg space-y-3">
                   <div className="flex justify-between items-center">
                     <Label className="text-white">Step {stepIndex + 1}</Label>
-                    <Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeStep(stepIndex)}>
-                      <XCircle className="w-4 h-4" />
-                    </Button>
+                    {steps.length > 1 && (
+                      <Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeStep(stepIndex)}>
+                        <XCircle className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
-                  <Input
-                    placeholder="Target URL for this step (optional)"
-                    value={step.targetUrl}
-                    onChange={(e) => handleStepChange(stepIndex, 'targetUrl', e.target.value)}
-                    disabled={isRunning || isTesting}
-                    className="bg-slate-900/50 border-slate-600 text-white text-xs"
-                  />
+                  {stepIndex === 0 && (
+                    <Input
+                      placeholder="Target URL for this step"
+                      value={step.targetUrl}
+                      onChange={(e) => handleStepChange(stepIndex, 'targetUrl', e.target.value)}
+                      disabled={isRunning || isTesting}
+                      className="bg-slate-900/50 border-slate-600 text-white text-xs"
+                    />
+                  )}
                   {step.fields.map((field, fieldIndex) => (
                     <div key={fieldIndex} className="flex gap-2">
                       <DropdownMenu>
@@ -369,9 +373,11 @@ export const AutoFillForm = ({
                         disabled={isRunning || isTesting}
                         className="bg-slate-900/50 border-slate-600 text-white text-xs"
                       />
-                      <Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeField(stepIndex, fieldIndex)}>
-                        <XCircle className="w-4 h-4" />
-                      </Button>
+                      {step.fields.length > 1 && (
+                        <Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeField(stepIndex, fieldIndex)}>
+                          <XCircle className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                   ))}
                   <Button variant="outline" size="sm" onClick={() => addField(stepIndex)}>

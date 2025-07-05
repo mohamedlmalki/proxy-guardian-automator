@@ -11,10 +11,6 @@ node_modules
 dist
 dist-ssr
 *.local
-user_data
-sessions
-screenshots
-
 
 # Editor directories and files
 .vscode/*
@@ -27,5 +23,3 @@ screenshots
 *.sln
 *.sw?
 .env
-
-
