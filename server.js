@@ -767,59 +767,7 @@ app.post('/api/test-fill', async (req, res) => {
 // END: NEW Test Endpoint
 
 // Endpoint for the IP Tester
-app.post('/api/custom-test', async (req, res) => {
-  const { proxy, targetUrl } = req.body;
-  if (!proxy || !targetUrl) {
-    return res.status(400).json({ success: false, message: 'Proxy and targetUrl are required.' });
-  }
 
-  let browser;
-  try {
-    const startTime = Date.now();
-    const browserArgs = [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu'
-    ];
-    
-    const proxyType = getTypeFromPort(proxy);
-    if (proxyType.startsWith('SOCKS')) {
-      browserArgs.push(`--proxy-server=socks5://${proxy}`);
-    } else {
-      browserArgs.push(`--proxy-server=http://${proxy}`);
-    }
-
-    browser = await puppeteer.launch({ headless: true, args: browserArgs });
-    const page = await browser.newPage();
-    const response = await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 });
-    
-    if (!response || !response.ok()) {
-        throw new Error(`Request failed with status: ${response?.status()}`);
-    }
-
-    const responseBody = await response.json();
-    const latency = Date.now() - startTime;
-
-    res.json({
-      success: true,
-      message: `Successfully received response from your endpoint.`,
-      status: response.status(),
-      latency: latency,
-      data: responseBody,
-    });
-  } catch (error) {
-    console.error(`Custom test for ${proxy} to ${targetUrl} failed:`, error.message);
-    res.status(500).json({ success: false, message: error.message });
-  } finally {
-    if (browser) {
-        await browser.close();
-    }
-  }
-});
 
 
 const PORT = 3001;

@@ -3,16 +3,17 @@ import { ProxyChecker } from "@/components/ProxyChecker";
 import { ProxySwitcher, RotationStrategy, SessionStat } from "@/components/ProxySwitcher";
 import { AutoFillForm, FormSelectors, AntiDetectSettings, FormInput, AutomationStep } from "@/components/AutoFillForm";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
-import { IpTester } from "@/components/IpTester";
 import { SessionSummaryDialog, SessionSummaryData } from "@/components/SessionSummaryDialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, RotateCcw, FormInput as FormInputIcon, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2, Hourglass, ListTodo, Timer as TimerIcon, X, XCircle } from "lucide-react";
+import { Shield, RotateCcw, FormInput as FormInputIcon, Save, FolderOpen, Trash2, Bell, PieChart, Upload, Download, TestTube2, Hourglass, ListTodo, Timer as TimerIcon, X, XCircle, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { FakerData } from "@/components/FakerData";
+
 
 type SwitchMode = 'time' | 'requests';
 type FilterMode = 'whitelist' | 'blacklist';
@@ -80,6 +81,12 @@ interface ProfileData {
     successKeyword: string;
     antiDetect: AntiDetectSettings;
     steps: AutomationStep[];
+}
+
+export interface FakerMapping {
+  id: string;
+  selector: string;
+  method: string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -157,6 +164,8 @@ const Index = () => {
       targetUrl: "",
     },
   ]);
+
+  const [fakerMappings, setFakerMappings] = useState<FakerMapping[]>([]);
 
   useEffect(() => { if (isAutoFillComplete) { calculateAndShowSummary(); setIsAutoFillComplete(false); } }, [isAutoFillComplete]);
 
@@ -608,13 +617,13 @@ const Index = () => {
             </Card>
         </div>
         <Tabs defaultValue="checker" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 bg-slate-800/50 border border-slate-700">
+          <TabsList className="grid w-full grid-cols-6 bg-slate-800/50 border border-slate-700">
             <TabsTrigger value="checker" className="flex items-center space-x-2 data-[state=active]:bg-blue-600"><Shield className="w-4 h-4" /><span>Proxy Checker</span></TabsTrigger>
             <TabsTrigger value="switcher" className="flex items-center space-x-2 data-[state=active]:bg-purple-600"><RotateCcw className="w-4 h-4" /><span>Proxy Switcher</span></TabsTrigger>
             <TabsTrigger value="autofill" className="flex items-center space-x-2 data-[state=active]:bg-green-600"><FormInputIcon className="w-4 h-4" /><span>Auto Fill</span></TabsTrigger>
-            <TabsTrigger value="ip-tester" className="flex items-center space-x-2 data-[state=active]:bg-lime-600"><TestTube2 className="w-4 h-4" /><span>IP Tester</span></TabsTrigger>
-            <TabsTrigger value="analytics" className="flex items-center space-x-2 data-[state=active]:bg-orange-600"><PieChart className="w-4 h-4" /><span>Analytics</span></TabsTrigger>
-          </TabsList>
+            <TabsTrigger value="faker" className="flex items-center space-x-2 data-[state=active]:bg-yellow-600"><Sparkles className="w-4 h-4" /><span>Faker Data</span></TabsTrigger>
+			<TabsTrigger value="analytics" className="flex items-center space-x-2 data-[state=active]:bg-orange-600"><PieChart className="w-4 h-4" /><span>Analytics</span></TabsTrigger>
+		  </TabsList>
           {showAutoFillDashboard && (
             <Card className="bg-slate-800/50 border-slate-700 relative">
                 <Button variant="ghost" size="icon" className="absolute top-2 right-2 h-6 w-6 text-gray-400 hover:text-white" onClick={handleClearAutoFillDashboard}>
@@ -671,13 +680,14 @@ const Index = () => {
               setSessionData={setSessionData}
               steps={steps}
               setSteps={setSteps}
+			  fakerMappings={fakerMappings}
             />
           </TabsContent>
-          <TabsContent value="ip-tester" className="space-y-6">
-            <IpTester activeProxy={activeProxy} onTestEndpoint={handleTestCustomEndpoint} />
-           </TabsContent>
+		  <TabsContent value="faker" className="space-y-6">
+		      <FakerData mappings={fakerMappings} setMappings={setFakerMappings} />
+		   </TabsContent>
            <TabsContent value="analytics" className="space-y-6">
-            <AnalyticsDashboard validProxies={validProxies} sessionStats={sessionStats} connectionLog={connectionLog} />
+              <AnalyticsDashboard validProxies={validProxies} sessionStats={sessionStats} connectionLog={connectionLog} />
           </TabsContent>
         </Tabs>
       </div>
